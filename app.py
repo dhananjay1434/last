@@ -84,7 +84,12 @@ logger = logging.getLogger("API_Server")
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+
+# Configure CORS
+cors_allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*")
+logger.info(f"Configuring CORS with allowed origins: {cors_allowed_origins}")
+CORS(app, resources={r"/*": {"origins": cors_allowed_origins.split(",")}})
+
 
 # Global variables to track extraction jobs
 extraction_jobs = {}
