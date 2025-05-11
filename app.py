@@ -10,7 +10,7 @@ import threading
 import time
 
 # Add the cracker-master directory to the Python path
-cracker_master_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cracker-master')
+cracker_master_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cracker-master')     
 sys.path.append(cracker_master_dir)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -57,55 +57,48 @@ try:
 
     # Try to import slide description generator
     try:
-        # First try to import from the current directory
-        import slide_description_generator
         from slide_description_generator import SlideDescriptionGenerator
         logger.info("Successfully imported slide description generator")
         ADVANCED_FEATURES_AVAILABLE = True
     except ImportError as e:
         logger.error(f"Error importing slide description generator: {e}")
         ADVANCED_FEATURES_AVAILABLE = False
-except ImportError:
+except ImportError as e:
+    logger.error(f"Error importing enhanced modules: {e}")
     ENHANCED_FEATURES_AVAILABLE = False
     TRANSCRIPTION_AVAILABLE = False
     OCR_ENHANCEMENT_AVAILABLE = False
     ADVANCED_FEATURES_AVAILABLE = False
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("api_server.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("API_Server")
-
 # Initialize Flask app
 app = Flask(__name__)
 
 # Configure CORS
-cors_allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*")
-logger.info(f"Configuring CORS with allowed origins: {cors_allowed_origins}")
-CORS(app, resources={r"/*": {"origins": cors_allowed_origins.split(",")}})
+try:
+    from cors_config import configure_cors
+    configure_cors(app)
+    logger.info("CORS configured from cors_config.py")
+except ImportError:
+    # Default CORS configuration
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    logger.info("Using default CORS configuration")
 
+# Define constants
+SLIDES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slides")
+os.makedirs(SLIDES_FOLDER, exist_ok=True)
 
-# Global variables to track extraction jobs
+# Global job tracking
 extraction_jobs = {}
 next_job_id = 1
 
-# Create upload directory if it doesn't exist
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# Create slides directory if it doesn't exist
-SLIDES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slides')
-os.makedirs(SLIDES_FOLDER, exist_ok=True)
-
-# Configure upload settings
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload size
+# Create a Flask route to serve the main page
+@app.route('/')
+def index():
+    return jsonify({
+        "status": "online",
+        "message": "Slide Extractor API is running",
+        "version": "1.0.0"
+    })
 
 # Serve static files from the slides directory
 @app.route('/slides/<path:filename>')
@@ -128,21 +121,24 @@ def get_status():
 def extract_slides():
     """Start slide extraction process"""
     global next_job_id
-
+    
     try:
-        # Get parameters from request
+        # Get JSON data from request
         data = request.json
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        # Get video URL
         video_url = data.get('video_url')
-
         if not video_url:
-            return jsonify({'error': 'Missing video URL'}), 400
+            return jsonify({'error': 'No video URL provided'}), 400
 
-        # Create a unique job ID
+        # Create job ID and output directory
         job_id = next_job_id
         next_job_id += 1
-
+        
         # Create output directory
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slides')
+        output_dir = os.path.join(SLIDES_FOLDER, f"job_{job_id}")
         os.makedirs(output_dir, exist_ok=True)
 
         # Extract parameters
@@ -190,188 +186,230 @@ def run_extraction(job_id, params):
 
     try:
         job['status'] = 'downloading'
+        update_job_progress(job_id, 10, 'Downloading video')
 
-        # Initialize extractor
-        if ENHANCED_FEATURES_AVAILABLE and (
-            params.get('enable_transcription') or
-            params.get('enable_ocr_enhancement') or
-            params.get('enable_concept_extraction') or
-            params.get('enable_slide_descriptions')
-        ):
-            # Use enhanced extractor
-            # Create a dictionary of parameters for SlideExtractor
-            slide_extractor_params = {
-                'adaptive_sampling': params['adaptive_sampling'],
-                'min_scene_length': params['min_scene_length'],
-                'extract_content': params['extract_content'],
-                'organize_slides': params['organize_slides']
-            }
-
-            # First create a basic extractor to download the video
-            base_extractor = SlideExtractor(
-                video_url=params['video_url'],
-                output_dir=params['output_dir'],
-                **slide_extractor_params
-            )
-
-            # Download the video
-            if base_extractor.download_video():
-                logger.info(f"Video downloaded to: {base_extractor.video_path}")
-                # Store the video path in the job parameters
-                params['video_path'] = base_extractor.video_path
-            else:
-                logger.error("Failed to download video")
-                job['status'] = 'failed'
-                job['error'] = 'Failed to download video'
-                return
-
-            # Create the EnhancedSlideExtractor
-            extractor = EnhancedSlideExtractor(
-                video_url=params['video_url'],
-                output_dir=params['output_dir'],
-                **slide_extractor_params
-            )
-
-            # Set the video path in the base extractor
-            extractor.base_extractor.video_path = params['video_path']
-
-            # Store additional parameters for later use
-            extractor.enable_transcription = params['enable_transcription']
-            extractor.enable_ocr_enhancement = params['enable_ocr_enhancement']
-            extractor.enable_concept_extraction = params['enable_concept_extraction']
-            extractor.enable_slide_descriptions = params['enable_slide_descriptions']
-            extractor.gemini_api_key = params['gemini_api_key']
-
-            # Log that we're using enhanced features
-            logger.info(f"Using enhanced features with Gemini API key: {params['gemini_api_key'] != ''}")
-
-            # Log which features are enabled
-            if params['enable_transcription']:
-                logger.info("Transcription is enabled")
-                logger.info(f"Video path for transcription: {params['video_path']}")
-
-            if params['enable_slide_descriptions']:
-                logger.info("Slide descriptions are enabled")
-        else:
-            # Use basic extractor
-            extractor = SlideExtractor(
-                video_url=params['video_url'],
-                output_dir=params['output_dir'],
-                adaptive_sampling=params['adaptive_sampling'],
-                min_scene_length=params['min_scene_length'],
-                extract_content=params['extract_content'],
-                organize_slides=params['organize_slides']
-            )
-
-        # Update job status
-        job['status'] = 'extracting'
+        # Create extractor
+        extractor = EnhancedSlideExtractor(
+            video_url=params['video_url'],
+            output_dir=params['output_dir'],
+            adaptive_sampling=params['adaptive_sampling'],
+            extract_content=params['extract_content'],
+            organize_slides=params['organize_slides'],
+            callback=lambda msg: update_job_progress(job_id, None, msg)
+        )
 
         # Extract slides
+        update_job_progress(job_id, 20, 'Extracting slides')
         success = extractor.extract_slides()
-
+        
         if not success:
             job['status'] = 'failed'
-            job['error'] = 'Slide extraction failed'
+            job['error'] = 'Failed to extract slides'
             return
 
+        # Get slides
+        update_job_progress(job_id, 70, 'Processing slides')
+        slides = extractor.get_slides()
+        
+        # Store slides in job
+        job['slides'] = slides
+        
         # Generate PDF if requested
         if params['generate_pdf']:
-            job['status'] = 'generating_pdf'
-            if isinstance(extractor, EnhancedSlideExtractor):
-                extractor.base_extractor.convert_slides_to_pdf()
-            else:
-                extractor.convert_slides_to_pdf()
+            update_job_progress(job_id, 80, 'Generating PDF')
+            pdf_path = extractor.convert_slides_to_pdf()
+            job['pdf_path'] = pdf_path
 
-        # Get slide metadata
-        if isinstance(extractor, EnhancedSlideExtractor):
-            slides_metadata = extractor.base_extractor.slides_metadata
-        else:
-            slides_metadata = extractor.slides_metadata
-
-        # Update job with results
+        # Process with enhanced features if available
+        if ENHANCED_FEATURES_AVAILABLE and (
+            params['enable_transcription'] or 
+            params['enable_ocr_enhancement'] or 
+            params['enable_concept_extraction'] or
+            params['enable_slide_descriptions']
+        ):
+            update_job_progress(job_id, 85, 'Running enhanced analysis')
+            
+            # Initialize content analyzer
+            content_analyzer = ContentAnalyzer(
+                slides_dir=params['output_dir'],
+                metadata=extractor.get_metadata()
+            )
+            
+            # Run transcription if enabled
+            if params['enable_transcription'] and TRANSCRIPTION_AVAILABLE:
+                update_job_progress(job_id, 87, 'Transcribing audio')
+                
+                # Initialize transcription service
+                transcription_service = GeminiTranscriptionService(
+                    api_key=params['gemini_api_key']
+                )
+                
+                # Get video path
+                video_path = extractor.get_video_path()
+                
+                # Run transcription
+                transcription = transcription_service.transcribe_video(video_path)
+                
+                # Store transcription in job
+                job['transcription'] = transcription
+                
+                # Add transcription to content analyzer
+                content_analyzer.add_transcription(transcription)
+            
+            # Run OCR enhancement if enabled
+            if params['enable_ocr_enhancement'] and OCR_ENHANCEMENT_AVAILABLE:
+                update_job_progress(job_id, 90, 'Enhancing OCR')
+                
+                # Initialize OCR enhancer
+                ocr_enhancer = OCRContextEnhancer(
+                    slides_dir=params['output_dir'],
+                    metadata=extractor.get_metadata()
+                )
+                
+                # Run enhancement
+                enhanced_metadata = ocr_enhancer.enhance_ocr()
+                
+                # Update metadata in content analyzer
+                content_analyzer.update_metadata(enhanced_metadata)
+            
+            # Run concept extraction if enabled
+            if params['enable_concept_extraction']:
+                update_job_progress(job_id, 92, 'Extracting concepts')
+                
+                # Extract concepts
+                concepts = content_analyzer.extract_concepts()
+                
+                # Store concepts in job
+                job['concepts'] = concepts
+            
+            # Generate slide descriptions if enabled
+            if params['enable_slide_descriptions'] and ADVANCED_FEATURES_AVAILABLE:
+                update_job_progress(job_id, 95, 'Generating slide descriptions')
+                
+                # Initialize description generator
+                description_generator = SlideDescriptionGenerator(
+                    api_key=params['gemini_api_key']
+                )
+                
+                # Generate descriptions
+                descriptions = description_generator.generate_descriptions(
+                    slides=slides,
+                    metadata=content_analyzer.get_metadata()
+                )
+                
+                # Store descriptions in job
+                job['descriptions'] = descriptions
+            
+            # Generate study guide
+            update_job_progress(job_id, 97, 'Generating study guide')
+            study_guide = content_analyzer.generate_study_guide()
+            
+            # Store study guide in job
+            study_guide_path = os.path.join(params['output_dir'], 'study_guide.md')
+            with open(study_guide_path, 'w', encoding='utf-8') as f:
+                f.write(study_guide)
+            
+            job['study_guide_path'] = study_guide_path
+        
+        # Mark job as completed
+        update_job_progress(job_id, 100, 'Completed')
         job['status'] = 'completed'
-        job['progress'] = 100
-        job['slides'] = slides_metadata
-
-        # If enhanced extractor was used, include additional data
-        if ENHANCED_FEATURES_AVAILABLE and isinstance(extractor, EnhancedSlideExtractor):
-            job['enhanced_metadata'] = extractor.enhanced_metadata
-
-            # Include study guide path if generated
-            study_guide_path = os.path.join(params['output_dir'], 'analysis', 'study_guide.md')
-            if os.path.exists(study_guide_path):
-                job['study_guide_path'] = study_guide_path
-
-            # Include language information if transcription was enabled
-            if params['enable_transcription']:
-                transcription_path = os.path.join(params['output_dir'], 'analysis', 'transcription.json')
-                if os.path.exists(transcription_path):
-                    try:
-                        with open(transcription_path, 'r', encoding='utf-8') as f:
-                            transcription_data = json.load(f)
-
-                        # Add language information if available
-                        if 'language' in transcription_data:
-                            job['language'] = transcription_data['language']
-                    except Exception as e:
-                        logger.error(f"Error loading transcription data for language info: {e}")
-
+        
     except Exception as e:
         logger.error(f"Error in extraction job {job_id}: {str(e)}")
         job['status'] = 'failed'
         job['error'] = str(e)
 
+def update_job_progress(job_id, progress, message):
+    """Update job progress"""
+    if job_id in extraction_jobs:
+        job = extraction_jobs[job_id]
+        if progress is not None:
+            job['progress'] = progress
+        if message:
+            job['message'] = message
+        logger.info(f"Job {job_id}: {progress}% - {message}")
+
 @app.route('/api/jobs/<int:job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Get status of an extraction job"""
+    """Get job status"""
     if job_id not in extraction_jobs:
         return jsonify({'error': 'Job not found'}), 404
-
+    
     job = extraction_jobs[job_id]
-
-    # Return basic job info without full slide data to keep response size small
+    
     return jsonify({
         'id': job['id'],
         'status': job['status'],
         'progress': job['progress'],
-        'error': job['error'],
-        'slide_count': len(job.get('slides', {}))
+        'message': job.get('message', ''),
+        'error': job.get('error'),
+        'slides_count': len(job.get('slides', [])),
+        'has_pdf': 'pdf_path' in job,
+        'has_study_guide': 'study_guide_path' in job,
+        'has_transcription': 'transcription' in job,
+        'has_concepts': 'concepts' in job,
+        'has_descriptions': 'descriptions' in job
     })
 
 @app.route('/api/jobs/<int:job_id>/slides', methods=['GET'])
 def get_job_slides(job_id):
-    """Get slides from an extraction job"""
+    """Get slides for a job"""
     if job_id not in extraction_jobs:
         return jsonify({'error': 'Job not found'}), 404
-
+    
     job = extraction_jobs[job_id]
-
+    
+    # Check if job is completed
     if job['status'] != 'completed':
         return jsonify({'error': 'Job not completed yet'}), 400
-
+    
+    # Return slides
     return jsonify({
-        'slides': job.get('slides', {})
+        'slides': job.get('slides', [])
     })
 
-@app.route('/api/jobs/<int:job_id>/study_guide', methods=['GET'])
-def get_study_guide(job_id):
-    """Get study guide for an extraction job"""
+@app.route('/api/jobs/<int:job_id>/pdf', methods=['GET'])
+def get_job_pdf(job_id):
+    """Get PDF for a job"""
     if job_id not in extraction_jobs:
         return jsonify({'error': 'Job not found'}), 404
-
+    
     job = extraction_jobs[job_id]
-
+    
+    # Check if job is completed
     if job['status'] != 'completed':
         return jsonify({'error': 'Job not completed yet'}), 400
+    
+    # Check if PDF is available
+    if 'pdf_path' not in job or not os.path.exists(job['pdf_path']):
+        return jsonify({'error': 'PDF not available'}), 404
+    
+    # Return PDF
+    return send_file(job['pdf_path'], mimetype='application/pdf', as_attachment=True)
 
+@app.route('/api/jobs/<int:job_id>/study-guide', methods=['GET'])
+def get_job_study_guide(job_id):
+    """Get study guide for a job"""
+    if job_id not in extraction_jobs:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    job = extraction_jobs[job_id]
+    
+    # Check if job is completed
+    if job['status'] != 'completed':
+        return jsonify({'error': 'Job not completed yet'}), 400
+    
+    # Check if study guide is available
     study_guide_path = job.get('study_guide_path')
     if not study_guide_path or not os.path.exists(study_guide_path):
         return jsonify({'error': 'Study guide not available'}), 404
-
+    
+    # Return study guide
     try:
         with open(study_guide_path, 'r', encoding='utf-8') as f:
             study_guide_content = f.read()
-
+        
         return jsonify({
             'content': study_guide_content
         })
@@ -380,4 +418,7 @@ def get_study_guide(job_id):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Get port from environment variable for Render deployment
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('ENVIRONMENT', 'development').lower() != 'production'
+    app.run(debug=debug, host='0.0.0.0', port=port)
