@@ -13,6 +13,6 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: CORS_ALLOWED_ORIGINS
-        value: "*"  # Allow all origins by default, can be changed in Render dashboard
+        value: "https://LazyToppers.netlify.app"  # Allow only the specified origin
       - key: GEMINI_API_KEY
         sync: false  # This will be set manually in the Render dashboard
