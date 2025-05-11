@@ -13,6 +13,6 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://LazyToppers.netlify.app"  # Allow only the specified origin
+        value: "https://LazyToppers.netlify.app,http://localhost:5173,http://localhost:5174,http://localhost:5175,https://slide-extractor-frontend.onrender.com"  # Allow multiple origins
       - key: GEMINI_API_KEY
         sync: false  # This will be set manually in the Render dashboard
