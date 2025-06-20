@@ -1,140 +1,49 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Download, FileText, Settings, CheckCircle, AlertCircle, Loader } from 'lucide-react';
-import axios from 'axios';
+import React from 'react';
+import { Play, Download, FileText, Settings, CheckCircle, Loader } from 'lucide-react';
+import { ExtractionOptionKey } from './types';
+import { ProgressBar, StatusIndicator, FeatureToggle } from './components';
+import { useExtraction } from './hooks/useExtraction';
 
-// Configuration
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://slide-extractor-api.onrender.com';
+const App: React.FC = () => {
+  const {
+    apiStatus,
+    videoUrl,
+    extractionOptions,
+    geminiApiKey,
+    currentJob,
+    jobStatus,
+    isExtracting,
+    setVideoUrl,
+    setExtractionOptions,
+    setGeminiApiKey,
+    startExtraction: startExtractionHook,
+    downloadPdf,
+    viewStudyGuide,
+    refreshApiStatus
+  } = useExtraction();
 
-function App() {
-  const [apiStatus, setApiStatus] = useState({ online: false, message: 'Checking...' });
-  const [videoUrl, setVideoUrl] = useState('');
-  const [extractionOptions, setExtractionOptions] = useState({
-    adaptive_sampling: true,
-    extract_content: true,
-    organize_slides: true,
-    generate_pdf: true,
-    enable_transcription: false,
-    enable_ocr_enhancement: false,
-    enable_concept_extraction: false,
-    enable_slide_descriptions: false
-  });
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [currentJob, setCurrentJob] = useState(null);
-  const [jobStatus, setJobStatus] = useState(null);
-  const [isExtracting, setIsExtracting] = useState(false);
-
-  // Check API status on component mount
-  useEffect(() => {
-    checkApiStatus();
-    const interval = setInterval(checkApiStatus, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  // Poll job status when extraction is running
-  useEffect(() => {
-    let interval;
-    if (currentJob && isExtracting) {
-      interval = setInterval(() => {
-        checkJobStatus(currentJob);
-      }, 2000);
-    }
-    return () => clearInterval(interval);
-  }, [currentJob, isExtracting]);
-
-  const checkApiStatus = async () => {
+  // Event handlers
+  const handleStartExtraction = async (): Promise<void> => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/status`, { timeout: 10000 });
-      setApiStatus({
-        online: true,
-        message: `✅ API Online - Features: ${Object.entries(response.data)
-          .filter(([key, value]) => key !== 'status' && value)
-          .map(([key]) => key.replace('_', ' '))
-          .join(', ')}`
-      });
-    } catch (error) {
-      setApiStatus({
-        online: false,
-        message: `❌ API Offline: ${error.message}`
-      });
+      await startExtractionHook();
+    } catch (error: any) {
+      alert(error.message);
     }
   };
 
-  const startExtraction = async () => {
-    if (!videoUrl.trim()) {
-      alert('Please enter a video URL');
-      return;
-    }
-
-    setIsExtracting(true);
+  const handleDownloadPdf = async (): Promise<void> => {
     try {
-      const requestData = {
-        video_url: videoUrl.trim(),
-        ...extractionOptions
-      };
-
-      if (geminiApiKey.trim()) {
-        requestData.gemini_api_key = geminiApiKey.trim();
-      }
-
-      const response = await axios.post(`${API_BASE_URL}/api/extract`, requestData);
-      setCurrentJob(response.data.job_id);
-      setJobStatus({
-        status: 'initializing',
-        progress: 0,
-        message: 'Starting extraction...'
-      });
-    } catch (error) {
-      setIsExtracting(false);
-      alert(`Error starting extraction: ${error.response?.data?.error || error.message}`);
+      await downloadPdf();
+    } catch (error: any) {
+      alert(error.message);
     }
   };
 
-  const checkJobStatus = async (jobId) => {
+  const handleViewStudyGuide = async (): Promise<void> => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/jobs/${jobId}`);
-      setJobStatus(response.data);
-      
-      if (response.data.status === 'completed' || response.data.status === 'failed') {
-        setIsExtracting(false);
-      }
-    } catch (error) {
-      console.error('Error checking job status:', error);
-    }
-  };
-
-  const downloadPdf = async () => {
-    if (!currentJob) return;
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/pdf`, {
-        responseType: 'blob'
-      });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `slides_job_${currentJob}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (error) {
-      alert('Error downloading PDF: ' + error.message);
-    }
-  };
-
-  const getStudyGuide = async () => {
-    if (!currentJob) return;
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/study-guide`);
-      const newWindow = window.open();
-      newWindow.document.write(`
-        <html>
-          <head><title>Study Guide - Job ${currentJob}</title></head>
-          <body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
-            <pre style="white-space: pre-wrap;">${response.data.content}</pre>
-          </body>
-        </html>
-      `);
-    } catch (error) {
-      alert('Error getting study guide: ' + error.message);
+      await viewStudyGuide();
+    } catch (error: any) {
+      alert(error.message);
     }
   };
 
@@ -154,7 +63,15 @@ function App() {
         {/* API Status */}
         <div className="mb-6">
           <div className={`p-4 rounded-lg ${apiStatus.online ? 'bg-green-100 border-green-300' : 'bg-red-100 border-red-300'} border`}>
-            <p className="text-sm font-medium">{apiStatus.message}</p>
+            <div className="flex justify-between items-center">
+              <p className="text-sm font-medium">{apiStatus.message}</p>
+              <button
+                onClick={refreshApiStatus}
+                className="px-3 py-1 text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md transition-colors"
+              >
+                🔄 Refresh
+              </button>
+            </div>
           </div>
         </div>
 
@@ -175,7 +92,7 @@ function App() {
               <input
                 type="url"
                 value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVideoUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isExtracting}
@@ -195,8 +112,8 @@ function App() {
                   <label key={key} className="flex items-center">
                     <input
                       type="checkbox"
-                      checked={extractionOptions[key]}
-                      onChange={(e) => setExtractionOptions(prev => ({
+                      checked={extractionOptions[key as keyof ExtractionOptions]}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExtractionOptions(prev => ({
                         ...prev,
                         [key]: e.target.checked
                       }))}
@@ -216,7 +133,7 @@ function App() {
                 <input
                   type="password"
                   value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGeminiApiKey(e.target.value)}
                   placeholder="Gemini API Key (optional)"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   disabled={isExtracting}
@@ -232,8 +149,8 @@ function App() {
                   <label key={key} className="flex items-center">
                     <input
                       type="checkbox"
-                      checked={extractionOptions[key]}
-                      onChange={(e) => setExtractionOptions(prev => ({
+                      checked={extractionOptions[key as keyof ExtractionOptions]}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExtractionOptions(prev => ({
                         ...prev,
                         [key]: e.target.checked
                       }))}
@@ -248,7 +165,7 @@ function App() {
 
             {/* Start Button */}
             <button
-              onClick={startExtraction}
+              onClick={handleStartExtraction}
               disabled={isExtracting || !apiStatus.online}
               className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-3 px-4 rounded-md flex items-center justify-center"
             >
@@ -289,7 +206,7 @@ function App() {
                   
                   {/* Progress Bar */}
                   <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div 
+                    <div
                       className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                       style={{ width: `${jobStatus.progress || 0}%` }}
                     ></div>
@@ -318,7 +235,7 @@ function App() {
                       
                       {jobStatus.has_pdf && (
                         <button
-                          onClick={downloadPdf}
+                          onClick={handleDownloadPdf}
                           className="flex items-center justify-center p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition-colors"
                         >
                           <Download className="mr-2" size={16} />
@@ -328,7 +245,7 @@ function App() {
                       
                       {jobStatus.has_study_guide && (
                         <button
-                          onClick={getStudyGuide}
+                          onClick={handleViewStudyGuide}
                           className="flex items-center justify-center p-3 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded transition-colors"
                         >
                           <FileText className="mr-2" size={16} />
@@ -355,6 +272,6 @@ function App() {
       </div>
     </div>
   );
-}
+};
 
 export default App;
