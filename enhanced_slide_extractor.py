@@ -416,6 +416,70 @@ class EnhancedSlideExtractor:
         except Exception as e:
             logger.error(f"Error generating study guide: {e}")
 
+    def get_slides(self):
+        """
+        Get the list of extracted slides with metadata.
+
+        Returns:
+            List of slide dictionaries with metadata
+        """
+        if hasattr(self.base_extractor, 'get_slides'):
+            return self.base_extractor.get_slides()
+
+        # Fallback: create slides list from metadata
+        slides = []
+        for filename, metadata in self.enhanced_metadata.items():
+            slide_info = {
+                'filename': filename,
+                'path': metadata.get('path', ''),
+                'timestamp': metadata.get('timestamp', ''),
+                'content': metadata.get('content', ''),
+                'title': metadata.get('title', ''),
+                'type': metadata.get('type', 'unknown'),
+                'keywords': metadata.get('keywords', []),
+                'analysis': metadata.get('content_analysis', {}),
+                'transcription': metadata.get('transcription', '')
+            }
+            slides.append(slide_info)
+
+        return slides
+
+    def get_metadata(self):
+        """
+        Get enhanced metadata for all slides.
+
+        Returns:
+            Dictionary of enhanced metadata
+        """
+        return self.enhanced_metadata
+
+    def get_video_path(self):
+        """
+        Get the path to the downloaded video file.
+
+        Returns:
+            String path to video file
+        """
+        if hasattr(self.base_extractor, 'get_video_path'):
+            return self.base_extractor.get_video_path()
+        elif hasattr(self.base_extractor, 'video_path'):
+            return self.base_extractor.video_path
+        else:
+            return None
+
+    def convert_slides_to_pdf(self):
+        """
+        Convert extracted slides to PDF.
+
+        Returns:
+            Path to generated PDF file
+        """
+        if hasattr(self.base_extractor, 'convert_slides_to_pdf'):
+            return self.base_extractor.convert_slides_to_pdf()
+        else:
+            logger.warning("PDF conversion not available in base extractor")
+            return None
+
 from collections import defaultdict
 
 def main():

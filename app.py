@@ -420,5 +420,19 @@ def get_job_study_guide(job_id):
 if __name__ == '__main__':
     # Get port from environment variable for Render deployment
     port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('ENVIRONMENT', 'development').lower() != 'production'
-    app.run(debug=debug, host='0.0.0.0', port=port)
+    environment = os.environ.get('ENVIRONMENT', 'development').lower()
+    debug = environment != 'production'
+
+    # Log startup information
+    logger.info(f"Starting Slide Extractor API")
+    logger.info(f"Environment: {environment}")
+    logger.info(f"Port: {port}")
+    logger.info(f"Debug mode: {debug}")
+
+    if environment == 'production':
+        # Production mode - use gunicorn in production
+        logger.info("Production mode: Use gunicorn for deployment")
+        app.run(debug=False, host='0.0.0.0', port=port)
+    else:
+        # Development mode
+        app.run(debug=debug, host='0.0.0.0', port=port)

@@ -35,7 +35,17 @@ logging.basicConfig(
 logger = logging.getLogger("SlideExtractor")
 
 # Import HumanDetector as a fallback for YOLO
-from human_detector import HumanDetector
+try:
+    from human_detector import HumanDetector
+except ImportError:
+    # Create a simple fallback HumanDetector class
+    class HumanDetector:
+        def __init__(self):
+            pass
+
+        def detect_humans(self, frame):
+            """Fallback human detection - returns empty list"""
+            return []
 
 # YOLO model configuration
 # Using a more OpenCV-compatible model
@@ -2018,6 +2028,48 @@ class SlideExtractor:
             logger.info(f"Saved metadata to {metadata_path}")
         except Exception as e:
             logger.error(f"Error saving metadata: {e}")
+
+    def get_slides(self):
+        """
+        Get the list of extracted slides with metadata.
+
+        Returns:
+            List of slide dictionaries with metadata
+        """
+        slides = []
+        for filename, metadata in self.slides_metadata.items():
+            slide_info = {
+                'filename': filename,
+                'path': metadata.get('path', ''),
+                'timestamp': metadata.get('timestamp', ''),
+                'content': metadata.get('content', ''),
+                'title': metadata.get('title', ''),
+                'type': metadata.get('type', 'unknown'),
+                'keywords': metadata.get('keywords', []),
+                'similarity': metadata.get('similarity', 0.0),
+                'frame_number': metadata.get('frame_number', 0)
+            }
+            slides.append(slide_info)
+
+        return slides
+
+    def get_metadata(self):
+        """
+        Get metadata for all slides.
+
+        Returns:
+            Dictionary of slide metadata
+        """
+        return self.slides_metadata
+
+    def get_video_path(self):
+        """
+        Get the path to the downloaded video file.
+
+        Returns:
+            String path to video file
+        """
+        return self.video_path
 
     def convert_slides_to_pdf(self, pdf_name="slides_output.pdf", batch_size=10,
                            include_toc=True, include_metadata=True, include_timestamps=True,
