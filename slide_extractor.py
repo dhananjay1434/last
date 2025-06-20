@@ -380,32 +380,106 @@ class SlideExtractor:
         return mask
 
     def download_video(self):
-        """Download the YouTube video using yt-dlp"""
+        """Download the YouTube video using yt-dlp with multiple fallback strategies"""
         try:
             if self.callback:
                 self.callback("Downloading video...")
 
-            command = [
-                "yt-dlp",
-                "-f", "best[ext=mp4]",
-                "-o", self.video_path,
-                self.video_url
+            # Multiple download strategies to bypass YouTube bot detection
+            strategies = [
+                # Strategy 1: Use cookies from Chrome browser
+                [
+                    "yt-dlp",
+                    "--cookies-from-browser", "chrome",
+                    "-f", "best[height<=720][ext=mp4]",
+                    "-o", self.video_path,
+                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "--extractor-args", "youtube:skip=dash,hls;player_skip=configs",
+                    "--no-check-certificates",
+                    "--ignore-errors",
+                    self.video_url
+                ],
+                # Strategy 2: Use cookies from Firefox browser
+                [
+                    "yt-dlp",
+                    "--cookies-from-browser", "firefox",
+                    "-f", "best[height<=720][ext=mp4]",
+                    "-o", self.video_path,
+                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+                    "--extractor-args", "youtube:skip=dash,hls",
+                    "--no-check-certificates",
+                    self.video_url
+                ],
+                # Strategy 3: Enhanced headers without cookies
+                [
+                    "yt-dlp",
+                    "-f", "worst[height<=480][ext=mp4]",
+                    "-o", self.video_path,
+                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "--add-header", "Accept-Language:en-US,en;q=0.9",
+                    "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "--extractor-args", "youtube:skip=dash,hls",
+                    "--sleep-interval", "1",
+                    "--max-sleep-interval", "3",
+                    self.video_url
+                ],
+                # Strategy 4: Basic download
+                [
+                    "yt-dlp",
+                    "-f", "mp4[height<=360]",
+                    "-o", self.video_path,
+                    "--no-check-certificates",
+                    "--ignore-errors",
+                    "--no-warnings",
+                    self.video_url
+                ]
             ]
-            result = subprocess.run(command, capture_output=True, text=True)
 
-            if result.returncode == 0:
-                print(f"Video downloaded to: {self.video_path}")
-                if self.callback:
-                    self.callback("Video downloaded successfully")
-                return True
-            else:
-                error_msg = f"yt-dlp error:\n{result.stderr}"
-                print(error_msg)
-                if self.callback:
-                    self.callback(f"Error: {error_msg}")
-                return False
+            for i, command in enumerate(strategies, 1):
+                try:
+                    if self.callback:
+                        self.callback(f"Trying download method {i}/4...")
+
+                    print(f"Attempting download with strategy {i}")
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+
+                    if result.returncode == 0 and os.path.exists(self.video_path):
+                        file_size = os.path.getsize(self.video_path)
+                        if file_size > 1024:  # File should be larger than 1KB
+                            print(f"✅ Video downloaded successfully using method {i} (Size: {file_size/1024/1024:.1f}MB)")
+                            if self.callback:
+                                self.callback("Video downloaded successfully")
+                            return True
+                        else:
+                            print(f"❌ Downloaded file too small ({file_size} bytes), trying next method")
+                            if os.path.exists(self.video_path):
+                                os.remove(self.video_path)
+                    else:
+                        print(f"❌ Method {i} failed with return code {result.returncode}")
+
+                except subprocess.TimeoutExpired:
+                    print(f"⏰ Method {i} timed out after 3 minutes")
+                    continue
+                except Exception as e:
+                    print(f"💥 Method {i} exception: {str(e)[:100]}...")
+                    continue
+
+            # If all methods fail, provide helpful error message
+            error_msg = "❌ Failed to download video after trying all methods.\n\n"
+            error_msg += "This is likely due to YouTube's enhanced bot detection. Possible solutions:\n"
+            error_msg += "1. Try a different YouTube video (some are more restricted)\n"
+            error_msg += "2. Use a video from a different platform\n"
+            error_msg += "3. Try again later (YouTube restrictions may be temporary)\n"
+            error_msg += "4. Use a shorter or more popular video\n\n"
+            error_msg += "The service is working correctly - this is a YouTube access limitation."
+
+            print(error_msg)
+            if self.callback:
+                self.callback(f"Download failed: YouTube bot detection active. Try a different video.")
+            return False
+
         except Exception as e:
-            error_msg = f"Error downloading video: {e}"
+            error_msg = f"Unexpected error during video download: {e}"
             print(error_msg)
             if self.callback:
                 self.callback(f"Error: {error_msg}")
@@ -604,6 +678,9 @@ class SlideExtractor:
                 "yt-dlp",
                 "--flat-playlist",
                 "--print", "id",
+                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "--extractor-args", "youtube:skip=dash,hls",
+                "--no-check-certificates",
                 playlist_url
             ]
 

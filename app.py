@@ -114,7 +114,25 @@ def get_status():
         'enhanced_features': ENHANCED_FEATURES_AVAILABLE,
         'transcription': TRANSCRIPTION_AVAILABLE,
         'ocr_enhancement': OCR_ENHANCEMENT_AVAILABLE,
-        'advanced_features': ADVANCED_FEATURES_AVAILABLE
+        'advanced_features': ADVANCED_FEATURES_AVAILABLE,
+        'demo_videos': [
+            {
+                'title': 'Khan Academy - Introduction to Algebra',
+                'url': 'https://www.youtube.com/watch?v=NybHckSEQBI',
+                'description': 'Educational math content, good for testing'
+            },
+            {
+                'title': 'MIT OpenCourseWare - Physics',
+                'url': 'https://www.youtube.com/watch?v=ZM8ECpBuQYE',
+                'description': 'University lecture with slides'
+            },
+            {
+                'title': 'TED-Ed - Science Explanation',
+                'url': 'https://www.youtube.com/watch?v=yWO-cvGETRQ',
+                'description': 'Animated educational content'
+            }
+        ],
+        'youtube_notice': 'Due to YouTube bot detection, some videos may fail to download. Try different videos if you encounter issues.'
     })
 
 @app.route('/api/extract', methods=['POST'])
