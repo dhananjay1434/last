@@ -1,58 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Download, FileText, Settings, CheckCircle, AlertCircle, Loader } from 'lucide-react';
-import axios, { AxiosResponse } from 'axios';
-
-// Types
-interface ApiStatus {
-  online: boolean;
-  message: string;
-}
-
-interface ExtractionOptions {
-  adaptive_sampling: boolean;
-  extract_content: boolean;
-  organize_slides: boolean;
-  generate_pdf: boolean;
-  enable_transcription: boolean;
-  enable_ocr_enhancement: boolean;
-  enable_concept_extraction: boolean;
-  enable_slide_descriptions: boolean;
-}
-
-interface JobStatus {
-  status: string;
-  progress: number;
-  message: string;
-  error?: string;
-  slides_count?: number;
-  has_pdf?: boolean;
-  has_study_guide?: boolean;
-}
-
-interface ExtractResponse {
-  job_id: string;
-  message: string;
-}
-
-interface StatusResponse {
-  enhanced_features?: boolean;
-  transcription?: boolean;
-  ocr_enhancement?: boolean;
-  advanced_features?: boolean;
-  [key: string]: any;
-}
-
-interface StudyGuideResponse {
-  content: string;
-}
+import axios from 'axios';
 
 // Configuration
-const API_BASE_URL: string = process.env.REACT_APP_API_URL || 'https://slide-extractor-api.onrender.com';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://last-api-4ybg.onrender.com';
 
-const App: React.FC = () => {
-  const [apiStatus, setApiStatus] = useState<ApiStatus>({ online: false, message: 'Checking...' });
-  const [videoUrl, setVideoUrl] = useState<string>('');
-  const [extractionOptions, setExtractionOptions] = useState<ExtractionOptions>({
+function App() {
+  const [apiStatus, setApiStatus] = useState({ online: false, message: 'Checking...' });
+  const [videoUrl, setVideoUrl] = useState('');
+  const [extractionOptions, setExtractionOptions] = useState({
     adaptive_sampling: true,
     extract_content: true,
     organize_slides: true,
@@ -62,10 +18,10 @@ const App: React.FC = () => {
     enable_concept_extraction: false,
     enable_slide_descriptions: false
   });
-  const [geminiApiKey, setGeminiApiKey] = useState<string>('');
-  const [currentJob, setCurrentJob] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
-  const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [currentJob, setCurrentJob] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);
+  const [isExtracting, setIsExtracting] = useState(false);
 
   // Check API status on component mount
   useEffect(() => {
@@ -85,9 +41,9 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [currentJob, isExtracting]);
 
-  const checkApiStatus = async (): Promise<void> => {
+  const checkApiStatus = async () => {
     try {
-      const response: AxiosResponse<StatusResponse> = await axios.get(`${API_BASE_URL}/api/status`, { timeout: 10000 });
+      const response = await axios.get(`${API_BASE_URL}/api/status`, { timeout: 10000 });
       setApiStatus({
         online: true,
         message: `✅ API Online - Features: ${Object.entries(response.data)
@@ -95,7 +51,7 @@ const App: React.FC = () => {
           .map(([key]) => key.replace('_', ' '))
           .join(', ')}`
       });
-    } catch (error: any) {
+    } catch (error) {
       setApiStatus({
         online: false,
         message: `❌ API Offline: ${error.message}`
@@ -103,7 +59,7 @@ const App: React.FC = () => {
     }
   };
 
-  const startExtraction = async (): Promise<void> => {
+  const startExtraction = async () => {
     if (!videoUrl.trim()) {
       alert('Please enter a video URL');
       return;
@@ -111,7 +67,7 @@ const App: React.FC = () => {
 
     setIsExtracting(true);
     try {
-      const requestData: any = {
+      const requestData = {
         video_url: videoUrl.trim(),
         ...extractionOptions
       };
@@ -120,36 +76,36 @@ const App: React.FC = () => {
         requestData.gemini_api_key = geminiApiKey.trim();
       }
 
-      const response: AxiosResponse<ExtractResponse> = await axios.post(`${API_BASE_URL}/api/extract`, requestData);
+      const response = await axios.post(`${API_BASE_URL}/api/extract`, requestData);
       setCurrentJob(response.data.job_id);
       setJobStatus({
         status: 'initializing',
         progress: 0,
         message: 'Starting extraction...'
       });
-    } catch (error: any) {
+    } catch (error) {
       setIsExtracting(false);
       alert(`Error starting extraction: ${error.response?.data?.error || error.message}`);
     }
   };
 
-  const checkJobStatus = async (jobId: string): Promise<void> => {
+  const checkJobStatus = async (jobId) => {
     try {
-      const response: AxiosResponse<JobStatus> = await axios.get(`${API_BASE_URL}/api/jobs/${jobId}`);
+      const response = await axios.get(`${API_BASE_URL}/api/jobs/${jobId}`);
       setJobStatus(response.data);
-
+      
       if (response.data.status === 'completed' || response.data.status === 'failed') {
         setIsExtracting(false);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error checking job status:', error);
     }
   };
 
-  const downloadPdf = async (): Promise<void> => {
+  const downloadPdf = async () => {
     if (!currentJob) return;
     try {
-      const response: AxiosResponse<Blob> = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/pdf`, {
+      const response = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/pdf`, {
         responseType: 'blob'
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -159,27 +115,25 @@ const App: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (error: any) {
+    } catch (error) {
       alert('Error downloading PDF: ' + error.message);
     }
   };
 
-  const getStudyGuide = async (): Promise<void> => {
+  const getStudyGuide = async () => {
     if (!currentJob) return;
     try {
-      const response: AxiosResponse<StudyGuideResponse> = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/study-guide`);
+      const response = await axios.get(`${API_BASE_URL}/api/jobs/${currentJob}/study-guide`);
       const newWindow = window.open();
-      if (newWindow) {
-        newWindow.document.write(`
-          <html>
-            <head><title>Study Guide - Job ${currentJob}</title></head>
-            <body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
-              <pre style="white-space: pre-wrap;">${response.data.content}</pre>
-            </body>
-          </html>
-        `);
-      }
-    } catch (error: any) {
+      newWindow.document.write(`
+        <html>
+          <head><title>Study Guide - Job ${currentJob}</title></head>
+          <body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+            <pre style="white-space: pre-wrap;">${response.data.content}</pre>
+          </body>
+        </html>
+      `);
+    } catch (error) {
       alert('Error getting study guide: ' + error.message);
     }
   };
@@ -221,7 +175,7 @@ const App: React.FC = () => {
               <input
                 type="url"
                 value={videoUrl}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVideoUrl(e.target.value)}
+                onChange={(e) => setVideoUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isExtracting}
@@ -241,8 +195,8 @@ const App: React.FC = () => {
                   <label key={key} className="flex items-center">
                     <input
                       type="checkbox"
-                      checked={extractionOptions[key as keyof ExtractionOptions]}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExtractionOptions(prev => ({
+                      checked={extractionOptions[key]}
+                      onChange={(e) => setExtractionOptions(prev => ({
                         ...prev,
                         [key]: e.target.checked
                       }))}
@@ -262,7 +216,7 @@ const App: React.FC = () => {
                 <input
                   type="password"
                   value={geminiApiKey}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGeminiApiKey(e.target.value)}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
                   placeholder="Gemini API Key (optional)"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   disabled={isExtracting}
@@ -278,8 +232,8 @@ const App: React.FC = () => {
                   <label key={key} className="flex items-center">
                     <input
                       type="checkbox"
-                      checked={extractionOptions[key as keyof ExtractionOptions]}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExtractionOptions(prev => ({
+                      checked={extractionOptions[key]}
+                      onChange={(e) => setExtractionOptions(prev => ({
                         ...prev,
                         [key]: e.target.checked
                       }))}
@@ -335,7 +289,7 @@ const App: React.FC = () => {
                   
                   {/* Progress Bar */}
                   <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div
+                    <div 
                       className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                       style={{ width: `${jobStatus.progress || 0}%` }}
                     ></div>
@@ -401,6 +355,6 @@ const App: React.FC = () => {
       </div>
     </div>
   );
-};
+}
 
 export default App;

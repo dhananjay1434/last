@@ -1,7 +1,11 @@
 # 🎬 Slide Extractor - AI-Powered Video Analysis
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/dhananjay1434/last)
 [![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/dhananjay1434/last)
+
+## 🌐 Live Demo
+- **Frontend**: [https://latenighter.netlify.app/](https://latenighter.netlify.app/)
+- **Backend**: Deploy using the Render button above
 
 > Extract slides from educational videos with AI-powered content analysis, transcription, and study guide generation.
 
