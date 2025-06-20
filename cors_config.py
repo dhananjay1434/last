@@ -20,15 +20,22 @@ def configure_cors(app):
     if environment == 'production':
         # In production, only allow requests from your frontend domains
         allowed_origins = [
-            # Add your production frontend URLs here
-            'https://your-netlify-app.netlify.app',
-            'https://your-render-app.onrender.com',
-            # You can add more domains if needed
+            # Production frontend URLs
+            'https://latenighter.netlify.app',
+            'https://slide-extractor-frontend.onrender.com',
+            'https://slide-extractor.netlify.app',
+            # Development URLs
+            'http://localhost:3000',
+            'http://localhost:5173',
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1:5173',
+            # Gradio URLs
+            'https://*.gradio.live'
         ]
         
-        # If CORS_ORIGINS is set in environment variables, use that instead
-        if os.environ.get('CORS_ORIGINS'):
-            allowed_origins = os.environ.get('CORS_ORIGINS').split(',')
+        # If CORS_ALLOWED_ORIGINS is set in environment variables, use that instead
+        if os.environ.get('CORS_ALLOWED_ORIGINS'):
+            allowed_origins = os.environ.get('CORS_ALLOWED_ORIGINS').split(',')
         
         CORS(app, resources={
             r"/api/*": {
