@@ -213,14 +213,17 @@ function App() {
             <div className="mb-6">
               <h3 className="text-lg font-medium mb-3">🤖 AI Features</h3>
               <div className="mb-3">
-                <input
-                  type="password"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="Gemini API Key (optional)"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  disabled={isExtracting}
-                />
+                <form onSubmit={(e) => e.preventDefault()}>
+                  <input
+                    type="password"
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    placeholder="Gemini API Key (optional)"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    disabled={isExtracting}
+                    autoComplete="current-password"
+                  />
+                </form>
               </div>
               <div className="space-y-2">
                 {Object.entries({
