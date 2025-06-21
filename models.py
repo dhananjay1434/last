@@ -56,8 +56,8 @@ class Job(db.Model):
     pdf_path: Mapped[Optional[str]] = mapped_column(String(500))
     study_guide_path: Mapped[Optional[str]] = mapped_column(String(500))
     
-    # Metadata
-    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
+    # Metadata (renamed to avoid SQLAlchemy reserved word)
+    job_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
     
     # Processing statistics
     processing_time: Mapped[Optional[float]] = mapped_column(Float)  # seconds
@@ -139,8 +139,8 @@ class Slide(db.Model):
     ocr_confidence: Mapped[Optional[float]] = mapped_column(Float)
     similarity_score: Mapped[Optional[float]] = mapped_column(Float)
     
-    # Metadata
-    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
+    # Metadata (renamed to avoid SQLAlchemy reserved word)
+    slide_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -163,7 +163,7 @@ class Slide(db.Model):
             'description': self.description,
             'ocr_confidence': self.ocr_confidence,
             'similarity_score': self.similarity_score,
-            'metadata': self.metadata or {}
+            'metadata': self.slide_metadata or {}
         }
 
 class JobMetrics(db.Model):

@@ -157,7 +157,7 @@ def analyze_content_task(self, job_id: str, slide_data: Dict[str, Any]):
             slide.keywords = analysis_result.get('keywords', [])
             slide.concepts = analysis_result.get('key_concepts', [])
             slide.description = analysis_result.get('summary', '')
-            slide.metadata = analysis_result
+            slide.slide_metadata = analysis_result
             db.session.commit()
         
         return analysis_result
@@ -198,9 +198,9 @@ def transcribe_audio_task(self, job_id: str, video_path: str, gemini_api_key: st
         # Store transcription in job metadata
         job = Job.query.filter_by(job_id=job_id).first()
         if job:
-            if not job.metadata:
-                job.metadata = {}
-            job.metadata['transcription'] = transcription_data
+            if not job.job_metadata:
+                job.job_metadata = {}
+            job.job_metadata['transcription'] = transcription_data
             db.session.commit()
         
         return transcription_data
@@ -287,7 +287,7 @@ def store_slides_in_db(job_id: str, slides: list):
                 slide_type=slide_data.get('type', 'unknown'),
                 keywords=slide_data.get('keywords', []),
                 transcription=slide_data.get('transcription', ''),
-                metadata=slide_data.get('analysis', {})
+                slide_metadata=slide_data.get('analysis', {})
             )
             db.session.add(slide)
         

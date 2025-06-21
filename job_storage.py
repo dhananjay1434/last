@@ -77,7 +77,7 @@ class JobStorageService:
                 enable_concept_extraction=job_data.get('enable_concept_extraction', False),
                 enable_slide_descriptions=job_data.get('enable_slide_descriptions', False),
                 status='pending',
-                metadata=job_data.get('metadata', {})
+                job_metadata=job_data.get('metadata', {})
             )
             
             db.session.add(job)
@@ -325,7 +325,7 @@ class JobStorageService:
         """Convert Redis string data back to appropriate types."""
         deserialized = {}
         for key, value in cached_data.items():
-            if key in ['metadata', 'keywords', 'concepts'] and value:
+            if key in ['job_metadata', 'slide_metadata', 'keywords', 'concepts'] and value:
                 try:
                     deserialized[key] = json.loads(value)
                 except json.JSONDecodeError:
