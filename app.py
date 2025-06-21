@@ -242,10 +242,17 @@ def extract_slides():
         if not video_url:
             return jsonify({'error': 'No video URL provided'}), 400
 
-        # Generate unique job ID (backward compatible)
-        # Use simple integer for compatibility with existing frontend
+        # Generate unique job ID using timestamp to avoid collisions
+        import time
+        import uuid
+
+        # Use timestamp + random component for uniqueness
+        timestamp = int(time.time() * 1000)  # milliseconds
+        random_suffix = str(uuid.uuid4())[:8]  # short random string
+        job_id = f"{timestamp}_{random_suffix}"
+
+        # Also update the global counter for backward compatibility
         global next_job_id
-        job_id = str(next_job_id)
         next_job_id += 1
 
         # Create output directory
