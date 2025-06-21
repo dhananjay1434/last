@@ -5,18 +5,26 @@ import logging
 import tempfile
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 from werkzeug.utils import secure_filename
 import threading
 import time
+from datetime import datetime, timezone
 
 # Add the cracker-master directory to the Python path
-cracker_master_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cracker-master')     
+cracker_master_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cracker-master')
 sys.path.append(cracker_master_dir)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import slide extractor components
 from slide_extractor import SlideExtractor
 from enhanced_slide_extractor import EnhancedSlideExtractor
+
+# Import scalability components
+from models import db, Job, Slide, JobMetrics
+from job_storage import job_storage
+from celery_config import make_celery
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +81,26 @@ except ImportError as e:
 # Initialize Flask app
 app = Flask(__name__)
 
+# Configure database
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith('postgres://'):
+    # Fix for Heroku/Render postgres URL
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///slide_extractor.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
+
+# Initialize database
+db.init_app(app)
+migrate = Migrate(app, db)
+
+# Initialize Celery
+celery = make_celery(app)
+
 # Configure CORS
 try:
     from cors_config import configure_cors
@@ -87,9 +115,12 @@ except ImportError:
 SLIDES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slides")
 os.makedirs(SLIDES_FOLDER, exist_ok=True)
 
-# Global job tracking
+# Global job tracking (legacy support - will be phased out)
 extraction_jobs = {}
 next_job_id = 1
+
+# Initialize job storage service
+job_storage.redis_client = job_storage.redis_client  # Ensure Redis is initialized
 
 # Create a Flask route to serve the main page
 @app.route('/')
@@ -199,9 +230,7 @@ def test_video_accessibility():
 
 @app.route('/api/extract', methods=['POST'])
 def extract_slides():
-    """Start slide extraction process"""
-    global next_job_id
-    
+    """Start slide extraction process using Celery for async processing"""
     try:
         # Get JSON data from request
         data = request.json
@@ -213,16 +242,19 @@ def extract_slides():
         if not video_url:
             return jsonify({'error': 'No video URL provided'}), 400
 
-        # Create job ID and output directory
-        job_id = next_job_id
+        # Generate unique job ID (backward compatible)
+        # Use simple integer for compatibility with existing frontend
+        global next_job_id
+        job_id = str(next_job_id)
         next_job_id += 1
-        
+
         # Create output directory
-        output_dir = os.path.join(SLIDES_FOLDER, f"job_{job_id}")
+        output_dir = os.path.join(SLIDES_FOLDER, job_id)
         os.makedirs(output_dir, exist_ok=True)
 
         # Extract parameters
         params = {
+            'job_id': job_id,
             'video_url': video_url,
             'output_dir': output_dir,
             'adaptive_sampling': data.get('adaptive_sampling', True),
@@ -237,24 +269,59 @@ def extract_slides():
             'gemini_api_key': data.get('gemini_api_key', os.environ.get('GEMINI_API_KEY', ''))
         }
 
-        # Store job information
-        extraction_jobs[job_id] = {
-            'id': job_id,
-            'status': 'initializing',
-            'progress': 0,
-            'params': params,
-            'output_dir': output_dir,
-            'slides': [],
-            'error': None
-        }
+        # Create job in storage
+        job_storage.create_job(params)
 
-        # Start extraction in a background thread
-        threading.Thread(target=run_extraction, args=(job_id, params)).start()
+        # Check if Celery is available
+        use_celery = os.environ.get('USE_CELERY', 'true').lower() == 'true'
 
-        return jsonify({
-            'job_id': job_id,
-            'status': 'initializing'
-        })
+        if use_celery:
+            try:
+                # Start async task with Celery
+                from tasks import extract_slides_task
+                task = extract_slides_task.delay(job_id, params)
+
+                logger.info(f"Started Celery task {task.id} for job {job_id}")
+
+                return jsonify({
+                    'job_id': job_id,
+                    'status': 'pending',
+                    'task_id': task.id,
+                    'message': 'Job queued for processing'
+                })
+
+            except Exception as celery_error:
+                logger.warning(f"Celery not available, falling back to threading: {celery_error}")
+                use_celery = False
+
+        if not use_celery:
+            # Fallback to threading for backward compatibility
+            # Store with both string and int keys for compatibility
+            job_data = {
+                'id': job_id,
+                'status': 'initializing',
+                'progress': 0,
+                'params': params,
+                'output_dir': output_dir,
+                'slides': [],
+                'error': None
+            }
+            extraction_jobs[job_id] = job_data
+            try:
+                # Also store with integer key if job_id is numeric
+                int_job_id = int(job_id)
+                extraction_jobs[int_job_id] = job_data
+            except (ValueError, TypeError):
+                pass
+
+            # Start extraction in a background thread
+            threading.Thread(target=run_extraction, args=(job_id, params)).start()
+
+            return jsonify({
+                'job_id': job_id,
+                'status': 'initializing',
+                'message': 'Job started with threading'
+            })
 
     except Exception as e:
         logger.error(f"Error starting extraction: {str(e)}")
@@ -262,7 +329,16 @@ def extract_slides():
 
 def run_extraction(job_id, params):
     """Run slide extraction in background thread"""
-    job = extraction_jobs[job_id]
+    # Handle both string and integer job IDs
+    job = None
+    for check_id in [job_id, int(job_id) if str(job_id).isdigit() else None]:
+        if check_id is not None and check_id in extraction_jobs:
+            job = extraction_jobs[check_id]
+            break
+
+    if not job:
+        logger.error(f"Job {job_id} not found in extraction_jobs")
+        return
 
     try:
         job['status'] = 'downloading'
@@ -402,100 +478,365 @@ def run_extraction(job_id, params):
 
 def update_job_progress(job_id, progress, message):
     """Update job progress"""
-    if job_id in extraction_jobs:
-        job = extraction_jobs[job_id]
+    # Handle both string and integer job IDs
+    job = None
+    for check_id in [job_id, int(job_id) if str(job_id).isdigit() else None]:
+        if check_id is not None and check_id in extraction_jobs:
+            job = extraction_jobs[check_id]
+            break
+
+    if job:
         if progress is not None:
             job['progress'] = progress
         if message:
             job['message'] = message
         logger.info(f"Job {job_id}: {progress}% - {message}")
+    else:
+        logger.warning(f"Job {job_id} not found for progress update")
 
-@app.route('/api/jobs/<int:job_id>', methods=['GET'])
+@app.route('/api/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Get job status"""
-    if job_id not in extraction_jobs:
-        return jsonify({'error': 'Job not found'}), 404
-    
-    job = extraction_jobs[job_id]
-    
-    return jsonify({
-        'id': job['id'],
-        'status': job['status'],
-        'progress': job['progress'],
-        'message': job.get('message', ''),
-        'error': job.get('error'),
-        'slides_count': len(job.get('slides', [])),
-        'has_pdf': 'pdf_path' in job,
-        'has_study_guide': 'study_guide_path' in job,
-        'has_transcription': 'transcription' in job,
-        'has_concepts': 'concepts' in job,
-        'has_descriptions': 'descriptions' in job
-    })
+    """Get job status from storage service"""
+    try:
+        # Try to get from job storage first
+        job_data = job_storage.get_job(job_id)
 
-@app.route('/api/jobs/<int:job_id>/slides', methods=['GET'])
+        if job_data:
+            return jsonify(job_data)
+
+        # Fallback to legacy in-memory storage (handle both string and int job IDs)
+        legacy_job_id = None
+        try:
+            # Try as integer first
+            legacy_job_id = int(job_id)
+        except (ValueError, TypeError):
+            # If job_id is already a string, try to find it directly
+            pass
+
+        # Check both the original job_id and the integer version
+        for check_id in [job_id, legacy_job_id]:
+            if check_id is not None and check_id in extraction_jobs:
+                job = extraction_jobs[check_id]
+                return jsonify({
+                    'id': str(job['id']),  # Ensure ID is returned as string
+                    'status': job['status'],
+                    'progress': job['progress'],
+                    'message': job.get('message', ''),
+                    'error': job.get('error'),
+                    'slides_count': len(job.get('slides', [])),
+                    'has_pdf': 'pdf_path' in job,
+                    'has_study_guide': 'study_guide_path' in job,
+                    'has_transcription': 'transcription' in job,
+                    'has_concepts': 'concepts' in job,
+                    'has_descriptions': 'descriptions' in job
+                })
+
+        return jsonify({'error': 'Job not found'}), 404
+
+    except Exception as e:
+        logger.error(f"Error getting job status for {job_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/jobs/<job_id>/slides', methods=['GET'])
 def get_job_slides(job_id):
-    """Get slides for a job"""
-    if job_id not in extraction_jobs:
-        return jsonify({'error': 'Job not found'}), 404
-    
-    job = extraction_jobs[job_id]
-    
-    # Check if job is completed
-    if job['status'] != 'completed':
-        return jsonify({'error': 'Job not completed yet'}), 400
-    
-    # Return slides
-    return jsonify({
-        'slides': job.get('slides', [])
-    })
+    """Get slides for a job from database"""
+    try:
+        # Check if job exists and is completed
+        job_data = job_storage.get_job(job_id)
+        if job_data:
+            if job_data['status'] != 'completed':
+                return jsonify({'error': 'Job not completed yet'}), 400
 
-@app.route('/api/jobs/<int:job_id>/pdf', methods=['GET'])
+            # Get slides from database
+            slides = Slide.query.filter_by(job_id=job_id).order_by(Slide.slide_number).all()
+            slides_data = [slide.to_dict() for slide in slides]
+
+            if slides_data:
+                return jsonify({
+                    'slides': slides_data,
+                    'count': len(slides_data)
+                })
+
+        # Fallback to legacy storage (handle both string and int job IDs)
+        legacy_job_id = None
+        try:
+            legacy_job_id = int(job_id)
+        except (ValueError, TypeError):
+            pass
+
+        # Check both the original job_id and the integer version
+        for check_id in [job_id, legacy_job_id]:
+            if check_id is not None and check_id in extraction_jobs:
+                job = extraction_jobs[check_id]
+                if job['status'] != 'completed':
+                    return jsonify({'error': 'Job not completed yet'}), 400
+
+                slides_data = job.get('slides', [])
+                return jsonify({
+                    'slides': slides_data,
+                    'count': len(slides_data)
+                })
+
+        return jsonify({'error': 'Job not found'}), 404
+
+    except Exception as e:
+        logger.error(f"Error getting slides for job {job_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/jobs/<job_id>/pdf', methods=['GET'])
 def get_job_pdf(job_id):
     """Get PDF for a job"""
-    if job_id not in extraction_jobs:
-        return jsonify({'error': 'Job not found'}), 404
-    
-    job = extraction_jobs[job_id]
-    
-    # Check if job is completed
-    if job['status'] != 'completed':
-        return jsonify({'error': 'Job not completed yet'}), 400
-    
-    # Check if PDF is available
-    if 'pdf_path' not in job or not os.path.exists(job['pdf_path']):
-        return jsonify({'error': 'PDF not available'}), 404
-    
-    # Return PDF
-    return send_file(job['pdf_path'], mimetype='application/pdf', as_attachment=True)
+    try:
+        # Try to get from job storage first
+        job_data = job_storage.get_job(job_id)
 
-@app.route('/api/jobs/<int:job_id>/study-guide', methods=['GET'])
+        if job_data:
+            if job_data['status'] != 'completed' or not job_data.get('has_pdf'):
+                return jsonify({'error': 'PDF not available'}), 404
+
+            # Get job from database to find PDF path
+            job = Job.query.filter_by(job_id=job_id).first()
+            if job and job.pdf_path and os.path.exists(job.pdf_path):
+                return send_file(job.pdf_path, mimetype='application/pdf', as_attachment=True)
+
+        # Fallback to legacy storage (convert job_id to int if needed)
+        try:
+            legacy_job_id = int(job_id) if job_id.isdigit() else None
+            if legacy_job_id and legacy_job_id in extraction_jobs:
+                job = extraction_jobs[legacy_job_id]
+                if job['status'] == 'completed' and 'pdf_path' in job and os.path.exists(job['pdf_path']):
+                    return send_file(job['pdf_path'], mimetype='application/pdf', as_attachment=True)
+        except (ValueError, TypeError):
+            pass
+
+        return jsonify({'error': 'PDF not available'}), 404
+
+    except Exception as e:
+        logger.error(f"Error getting PDF for job {job_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/jobs/<job_id>/study-guide', methods=['GET'])
 def get_job_study_guide(job_id):
     """Get study guide for a job"""
-    if job_id not in extraction_jobs:
-        return jsonify({'error': 'Job not found'}), 404
-    
-    job = extraction_jobs[job_id]
-    
-    # Check if job is completed
-    if job['status'] != 'completed':
-        return jsonify({'error': 'Job not completed yet'}), 400
-    
-    # Check if study guide is available
-    study_guide_path = job.get('study_guide_path')
-    if not study_guide_path or not os.path.exists(study_guide_path):
-        return jsonify({'error': 'Study guide not available'}), 404
-    
-    # Return study guide
     try:
-        with open(study_guide_path, 'r', encoding='utf-8') as f:
-            study_guide_content = f.read()
-        
+        # Try to get from job storage first
+        job_data = job_storage.get_job(job_id)
+
+        if job_data:
+            if job_data['status'] != 'completed' or not job_data.get('has_study_guide'):
+                return jsonify({'error': 'Study guide not available'}), 404
+
+            # Get job from database to find study guide path
+            job = Job.query.filter_by(job_id=job_id).first()
+            if job and job.study_guide_path and os.path.exists(job.study_guide_path):
+                with open(job.study_guide_path, 'r', encoding='utf-8') as f:
+                    study_guide_content = f.read()
+                return jsonify({'content': study_guide_content})
+
+        # Fallback to legacy storage (convert job_id to int if needed)
+        try:
+            legacy_job_id = int(job_id) if job_id.isdigit() else None
+            if legacy_job_id and legacy_job_id in extraction_jobs:
+                job = extraction_jobs[legacy_job_id]
+                if job['status'] == 'completed':
+                    study_guide_path = job.get('study_guide_path')
+                    if study_guide_path and os.path.exists(study_guide_path):
+                        with open(study_guide_path, 'r', encoding='utf-8') as f:
+                            study_guide_content = f.read()
+                        return jsonify({'content': study_guide_content})
+        except (ValueError, TypeError):
+            pass
+
+        return jsonify({'error': 'Study guide not available'}), 404
+
+    except Exception as e:
+        logger.error(f"Error getting study guide for job {job_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# New API endpoints for scalability features
+
+@app.route('/api/jobs', methods=['GET'])
+def list_jobs():
+    """List all jobs with pagination and filtering"""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        status_filter = request.args.get('status')
+
+        query = Job.query
+
+        if status_filter:
+            query = query.filter(Job.status == status_filter)
+
+        jobs = query.order_by(Job.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+
         return jsonify({
-            'content': study_guide_content
+            'jobs': [job.to_dict() for job in jobs.items],
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': jobs.total,
+                'pages': jobs.pages,
+                'has_next': jobs.has_next,
+                'has_prev': jobs.has_prev
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error listing jobs: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/jobs/<job_id>/metrics', methods=['GET'])
+def get_job_metrics(job_id):
+    """Get detailed metrics for a job"""
+    try:
+        metrics = JobMetrics.query.filter_by(job_id=job_id).first()
+        if not metrics:
+            return jsonify({'error': 'Metrics not found'}), 404
+
+        return jsonify(metrics.to_dict())
+
+    except Exception as e:
+        logger.error(f"Error getting metrics for job {job_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Comprehensive health check endpoint"""
+    try:
+        health_data = {
+            'status': 'healthy',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'version': '2.0.0',
+            'components': {}
+        }
+
+        # Check database
+        try:
+            db.session.execute('SELECT 1')
+            health_data['components']['database'] = 'healthy'
+        except Exception as e:
+            health_data['components']['database'] = f'unhealthy: {str(e)}'
+            health_data['status'] = 'degraded'
+
+        # Check Redis
+        try:
+            if job_storage.redis_client:
+                job_storage.redis_client.ping()
+                health_data['components']['redis'] = 'healthy'
+            else:
+                health_data['components']['redis'] = 'disabled'
+        except Exception as e:
+            health_data['components']['redis'] = f'unhealthy: {str(e)}'
+            health_data['status'] = 'degraded'
+
+        # Check Celery
+        try:
+            from celery_config import get_celery_health
+            celery_health = get_celery_health()
+            health_data['components']['celery'] = celery_health
+            if celery_health['status'] != 'healthy':
+                health_data['status'] = 'degraded'
+        except Exception as e:
+            health_data['components']['celery'] = f'error: {str(e)}'
+            health_data['status'] = 'degraded'
+
+        # Get system stats
+        try:
+            import psutil
+            health_data['system'] = {
+                'cpu_percent': psutil.cpu_percent(),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_percent': psutil.disk_usage('/').percent
+            }
+        except Exception:
+            pass
+
+        status_code = 200 if health_data['status'] == 'healthy' else 503
+        return jsonify(health_data), status_code
+
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }), 503
+
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """Get system statistics and metrics"""
+    try:
+        # Job statistics
+        total_jobs = Job.query.count()
+        completed_jobs = Job.query.filter_by(status='completed').count()
+        failed_jobs = Job.query.filter_by(status='failed').count()
+        active_jobs = Job.query.filter(Job.status.in_(['pending', 'processing'])).count()
+
+        # Recent activity (last 24 hours)
+        from datetime import timedelta
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        recent_jobs = Job.query.filter(Job.created_at >= yesterday).count()
+
+        # Average processing time
+        avg_processing_time = db.session.query(
+            db.func.avg(JobMetrics.total_processing_time)
+        ).scalar() or 0
+
+        return jsonify({
+            'jobs': {
+                'total': total_jobs,
+                'completed': completed_jobs,
+                'failed': failed_jobs,
+                'active': active_jobs,
+                'recent_24h': recent_jobs,
+                'success_rate': (completed_jobs / max(total_jobs, 1)) * 100
+            },
+            'performance': {
+                'avg_processing_time': round(avg_processing_time, 2),
+                'total_slides_extracted': db.session.query(db.func.sum(Job.slides_count)).scalar() or 0
+            },
+            'system': {
+                'active_job_storage': len(job_storage.get_active_jobs()),
+                'redis_enabled': job_storage.enable_redis,
+                'celery_enabled': os.environ.get('USE_CELERY', 'true').lower() == 'true'
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+# Debug endpoint for troubleshooting
+@app.route('/api/debug/jobs', methods=['GET'])
+def debug_jobs():
+    """Debug endpoint to see current jobs in memory"""
+    try:
+        return jsonify({
+            'in_memory_jobs': {
+                'keys': list(extraction_jobs.keys()),
+                'count': len(extraction_jobs),
+                'jobs': {str(k): {'id': v.get('id'), 'status': v.get('status')}
+                        for k, v in extraction_jobs.items()}
+            },
+            'next_job_id': next_job_id,
+            'storage_service_active_jobs': job_storage.get_active_jobs()
         })
     except Exception as e:
-        logger.error(f"Error reading study guide: {str(e)}")
+        logger.error(f"Debug endpoint error: {e}")
         return jsonify({'error': str(e)}), 500
+
+# Database initialization
+@app.before_first_request
+def create_tables():
+    """Create database tables on first request"""
+    try:
+        db.create_all()
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Error creating database tables: {e}")
 
 if __name__ == '__main__':
     # Get port from environment variable for Render deployment
@@ -504,10 +845,21 @@ if __name__ == '__main__':
     debug = environment != 'production'
 
     # Log startup information
-    logger.info(f"Starting Slide Extractor API")
+    logger.info(f"Starting Slide Extractor API v2.0")
     logger.info(f"Environment: {environment}")
     logger.info(f"Port: {port}")
     logger.info(f"Debug mode: {debug}")
+    logger.info(f"Database: {app.config['SQLALCHEMY_DATABASE_URI']}")
+    logger.info(f"Redis enabled: {job_storage.enable_redis}")
+    logger.info(f"Celery enabled: {os.environ.get('USE_CELERY', 'true')}")
+
+    # Create database tables
+    with app.app_context():
+        try:
+            db.create_all()
+            logger.info("Database tables created successfully")
+        except Exception as e:
+            logger.error(f"Error creating database tables: {e}")
 
     if environment == 'production':
         # Production mode - use gunicorn in production
