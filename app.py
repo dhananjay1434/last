@@ -98,8 +98,18 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 db.init_app(app)
 migrate = Migrate(app, db)
 
-# Initialize Celery
-celery = make_celery(app)
+# Initialize Celery (only if enabled)
+use_celery_env = os.environ.get('USE_CELERY', 'true').lower() == 'true'
+if use_celery_env:
+    try:
+        celery = make_celery(app)
+        logger.info("Celery initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Celery: {e}")
+        celery = None
+else:
+    logger.info("Celery disabled by USE_CELERY environment variable")
+    celery = None
 
 # Configure CORS
 try:

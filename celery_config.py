@@ -10,16 +10,33 @@ from kombu import Queue
 def make_celery(app=None):
     """
     Create and configure Celery instance.
-    
+
     Args:
         app: Flask application instance
-        
+
     Returns:
-        Configured Celery instance
+        Configured Celery instance or None if disabled
     """
+    # Check if Celery is disabled
+    use_celery = os.environ.get('USE_CELERY', 'true').lower() == 'true'
+
+    if not use_celery:
+        # Return a mock Celery instance that doesn't try to connect
+        class MockCelery:
+            def __init__(self):
+                self.conf = {}
+
+            def delay(self, *args, **kwargs):
+                raise Exception("Celery is disabled")
+
+            def start(self, *args, **kwargs):
+                raise Exception("Celery is disabled")
+
+        return MockCelery()
+
     # Get configuration from environment
     redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-    
+
     # Create Celery instance
     celery = Celery(
         'slide_extractor',
