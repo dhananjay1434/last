@@ -66,6 +66,8 @@ const App: React.FC = () => {
   const [currentJob, setCurrentJob] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [isTestingVideo, setIsTestingVideo] = useState<boolean>(false);
+  const [videoTestResult, setVideoTestResult] = useState<string | null>(null);
 
   // Check API status on component mount
   useEffect(() => {
@@ -103,6 +105,32 @@ const App: React.FC = () => {
     }
   };
 
+  const testVideoAccessibility = async (): Promise<void> => {
+    if (!videoUrl.trim()) {
+      alert('Please enter a video URL');
+      return;
+    }
+
+    setIsTestingVideo(true);
+    setVideoTestResult(null);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/test-video`, {
+        video_url: videoUrl.trim()
+      });
+
+      if (response.data.accessible) {
+        setVideoTestResult(`✅ Video accessible: "${response.data.title}"`);
+      } else {
+        setVideoTestResult(`❌ ${response.data.message}. ${response.data.suggestion}`);
+      }
+    } catch (error: any) {
+      setVideoTestResult(`❌ Error testing video: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setIsTestingVideo(false);
+    }
+  };
+
   const startExtraction = async (): Promise<void> => {
     if (!videoUrl.trim()) {
       alert('Please enter a video URL');
@@ -110,6 +138,7 @@ const App: React.FC = () => {
     }
 
     setIsExtracting(true);
+    setVideoTestResult(null);
     try {
       const requestData: any = {
         video_url: videoUrl.trim(),
@@ -129,7 +158,12 @@ const App: React.FC = () => {
       });
     } catch (error: any) {
       setIsExtracting(false);
-      alert(`Error starting extraction: ${error.response?.data?.error || error.message}`);
+      const errorMessage = error.response?.data?.error || error.message;
+      if (errorMessage.includes('bot detection') || errorMessage.includes('YouTube')) {
+        alert(`YouTube Access Issue: ${errorMessage}\n\nTry:\n1. A different video\n2. A shorter video\n3. An educational channel video\n4. Testing the video first using the "Test Video" button`);
+      } else {
+        alert(`Error starting extraction: ${errorMessage}`);
+      }
     }
   };
 
@@ -218,14 +252,30 @@ const App: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Video URL
               </label>
-              <input
-                type="url"
-                value={videoUrl}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVideoUrl(e.target.value)}
-                placeholder="https://www.youtube.com/watch?v=..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isExtracting}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={videoUrl}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setVideoUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isExtracting || isTestingVideo}
+                />
+                <button
+                  onClick={testVideoAccessibility}
+                  disabled={isExtracting || isTestingVideo || !videoUrl.trim()}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white text-sm rounded-md"
+                >
+                  {isTestingVideo ? 'Testing...' : 'Test Video'}
+                </button>
+              </div>
+              {videoTestResult && (
+                <div className={`mt-2 p-2 rounded text-sm ${
+                  videoTestResult.startsWith('✅') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {videoTestResult}
+                </div>
+              )}
             </div>
 
             {/* Basic Options */}

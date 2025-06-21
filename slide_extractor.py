@@ -385,49 +385,84 @@ class SlideExtractor:
             if self.callback:
                 self.callback("Downloading video...")
 
-            # Multiple download strategies to bypass YouTube bot detection
+            # Enhanced download strategies with better anti-bot measures
+            import random
+            import time
+
+            # Rotate user agents to avoid detection
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0"
+            ]
+
             strategies = [
-                # Strategy 1: Use cookies from Chrome browser
+                # Strategy 1: Enhanced with random user agent and delays
                 [
                     "yt-dlp",
-                    "--cookies-from-browser", "chrome",
-                    "-f", "best[height<=720][ext=mp4]",
+                    "-f", "best[height<=720][ext=mp4]/best[height<=720]/best",
                     "-o", self.video_path,
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "--user-agent", random.choice(user_agents),
+                    "--add-header", "Accept-Language:en-US,en;q=0.9",
+                    "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "--add-header", "Accept-Encoding:gzip, deflate, br",
+                    "--add-header", "Connection:keep-alive",
+                    "--add-header", "Upgrade-Insecure-Requests:1",
                     "--extractor-args", "youtube:skip=dash,hls;player_skip=configs",
+                    "--sleep-interval", "2",
+                    "--max-sleep-interval", "5",
                     "--no-check-certificates",
                     "--ignore-errors",
                     self.video_url
                 ],
-                # Strategy 2: Use cookies from Firefox browser
+                # Strategy 2: Mobile user agent with lower quality
                 [
                     "yt-dlp",
-                    "--cookies-from-browser", "firefox",
-                    "-f", "best[height<=720][ext=mp4]",
+                    "-f", "best[height<=480][ext=mp4]/worst[height>=240]",
                     "-o", self.video_path,
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+                    "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                    "--add-header", "Accept-Language:en-US,en;q=0.9",
                     "--extractor-args", "youtube:skip=dash,hls",
+                    "--sleep-interval", "3",
+                    "--max-sleep-interval", "7",
                     "--no-check-certificates",
                     self.video_url
                 ],
-                # Strategy 3: Enhanced headers without cookies
+                # Strategy 3: Very conservative approach
                 [
                     "yt-dlp",
-                    "-f", "worst[height<=480][ext=mp4]",
+                    "-f", "18/worst[ext=mp4]/worst",  # Format 18 is 360p MP4
                     "-o", self.video_path,
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "--add-header", "Accept-Language:en-US,en;q=0.9",
-                    "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "--extractor-args", "youtube:skip=dash,hls",
-                    "--sleep-interval", "1",
-                    "--max-sleep-interval", "3",
+                    "--user-agent", random.choice(user_agents),
+                    "--extractor-args", "youtube:skip=dash,hls,live_chat",
+                    "--sleep-interval", "5",
+                    "--max-sleep-interval", "10",
+                    "--retries", "3",
+                    "--fragment-retries", "3",
+                    "--no-check-certificates",
+                    "--ignore-errors",
                     self.video_url
                 ],
-                # Strategy 4: Basic download
+                # Strategy 4: Separate audio/video streams
                 [
                     "yt-dlp",
-                    "-f", "mp4[height<=360]",
+                    "-f", "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]",
                     "-o", self.video_path,
+                    "--user-agent", random.choice(user_agents),
+                    "--merge-output-format", "mp4",
+                    "--sleep-interval", "4",
+                    "--no-check-certificates",
+                    "--ignore-errors",
+                    self.video_url
+                ],
+                # Strategy 5: Minimal approach with basic format
+                [
+                    "yt-dlp",
+                    "-f", "worst",
+                    "-o", self.video_path,
+                    "--user-agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                     "--no-check-certificates",
                     "--ignore-errors",
                     "--no-warnings",
@@ -438,10 +473,16 @@ class SlideExtractor:
             for i, command in enumerate(strategies, 1):
                 try:
                     if self.callback:
-                        self.callback(f"Trying download method {i}/4...")
+                        self.callback(f"Trying download method {i}/{len(strategies)}...")
 
                     print(f"Attempting download with strategy {i}")
-                    result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+
+                    # Add random delay between attempts to avoid rate limiting
+                    if i > 1:
+                        delay = random.uniform(2, 5)
+                        time.sleep(delay)
+
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=240)
 
                     if result.returncode == 0 and os.path.exists(self.video_path):
                         file_size = os.path.getsize(self.video_path)

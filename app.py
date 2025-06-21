@@ -130,10 +130,72 @@ def get_status():
                 'title': 'TED-Ed - Science Explanation',
                 'url': 'https://www.youtube.com/watch?v=yWO-cvGETRQ',
                 'description': 'Animated educational content'
+            },
+            {
+                'title': 'Coursera - Machine Learning Basics',
+                'url': 'https://www.youtube.com/watch?v=ukzFI9rgwfU',
+                'description': 'Short educational video with clear slides'
             }
         ],
-        'youtube_notice': 'Due to YouTube bot detection, some videos may fail to download. Try different videos if you encounter issues.'
+        'youtube_notice': 'Due to YouTube bot detection, some videos may fail to download. Try different videos if you encounter issues.',
+        'tips': [
+            'Try shorter videos (under 10 minutes) for better success rates',
+            'Educational channels often have less restrictive content',
+            'Popular videos may be more accessible than private/unlisted ones',
+            'If one video fails, try a different one - the service is working correctly'
+        ]
     })
+
+@app.route('/api/test-video', methods=['POST'])
+def test_video_accessibility():
+    """Test if a video URL is accessible without full extraction"""
+    try:
+        data = request.json
+        if not data or 'video_url' not in data:
+            return jsonify({'error': 'No video URL provided'}), 400
+
+        video_url = data['video_url']
+
+        # Quick test using yt-dlp to check if video is accessible
+        import subprocess
+
+        test_command = [
+            "yt-dlp",
+            "--no-download",
+            "--print", "title",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "--no-check-certificates",
+            "--ignore-errors",
+            video_url
+        ]
+
+        result = subprocess.run(test_command, capture_output=True, text=True, timeout=30)
+
+        if result.returncode == 0 and result.stdout.strip():
+            return jsonify({
+                'accessible': True,
+                'title': result.stdout.strip(),
+                'message': 'Video appears to be accessible for extraction'
+            })
+        else:
+            return jsonify({
+                'accessible': False,
+                'message': 'Video may not be accessible due to restrictions',
+                'suggestion': 'Try a different video or check if the URL is correct'
+            })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'accessible': False,
+            'message': 'Video test timed out',
+            'suggestion': 'Video may be restricted or unavailable'
+        })
+    except Exception as e:
+        return jsonify({
+            'accessible': False,
+            'message': f'Error testing video: {str(e)}',
+            'suggestion': 'Please check the video URL and try again'
+        })
 
 @app.route('/api/extract', methods=['POST'])
 def extract_slides():

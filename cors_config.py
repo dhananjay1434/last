@@ -35,7 +35,12 @@ def configure_cors(app):
         
         # If CORS_ALLOWED_ORIGINS is set in environment variables, use that instead
         if os.environ.get('CORS_ALLOWED_ORIGINS'):
-            allowed_origins = os.environ.get('CORS_ALLOWED_ORIGINS').split(',')
+            cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS')
+            # Handle both comma-separated and single origin
+            if ',' in cors_origins:
+                allowed_origins = [origin.strip() for origin in cors_origins.split(',')]
+            else:
+                allowed_origins = [cors_origins.strip()]
         
         CORS(app, resources={
             r"/api/*": {

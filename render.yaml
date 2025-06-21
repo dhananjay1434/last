@@ -13,7 +13,7 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://latenighter.netlify.app,https://slide-extractor-frontend.onrender.com,https://slide-extractor.netlify.app,http://localhost:3000,http://localhost:5173"
+        value: "https://latenighter.netlify.app"
       - key: GEMINI_API_KEY
         sync: false  # This will be set manually in the Render dashboard
       - key: MAX_CONTENT_LENGTH

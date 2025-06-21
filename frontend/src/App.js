@@ -43,7 +43,13 @@ function App() {
 
   const checkApiStatus = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/status`, { timeout: 10000 });
+      const response = await axios.get(`${API_BASE_URL}/api/status`, {
+        timeout: 15000,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
       setApiStatus({
         online: true,
         message: `✅ API Online - Features: ${Object.entries(response.data)
@@ -52,9 +58,22 @@ function App() {
           .join(', ')}`
       });
     } catch (error) {
+      console.error('API Status Check Error:', error);
+      let errorMessage = 'Network Error';
+
+      if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Request Timeout - API may be starting up';
+      } else if (error.response) {
+        errorMessage = `Server Error: ${error.response.status}`;
+      } else if (error.request) {
+        errorMessage = 'Network Error - Check connection';
+      } else {
+        errorMessage = error.message;
+      }
+
       setApiStatus({
         online: false,
-        message: `❌ API Offline: ${error.message}`
+        message: `❌ API Offline: ${errorMessage}`
       });
     }
   };
