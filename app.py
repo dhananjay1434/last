@@ -715,7 +715,7 @@ def health_check():
 
         # Check database
         try:
-            db.session.execute('SELECT 1')
+            db.session.execute(db.text('SELECT 1'))
             health_data['components']['database'] = 'healthy'
         except Exception as e:
             health_data['components']['database'] = f'unhealthy: {str(e)}'
@@ -829,14 +829,24 @@ def debug_jobs():
         return jsonify({'error': str(e)}), 500
 
 # Database initialization
-@app.before_first_request
 def create_tables():
-    """Create database tables on first request"""
+    """Create database tables"""
     try:
-        db.create_all()
-        logger.info("Database tables created successfully")
+        with app.app_context():
+            # Check if we can connect to the database
+            with db.engine.connect() as conn:
+                conn.execute(db.text('SELECT 1'))
+
+            # Create tables if they don't exist
+            db.create_all()
+            logger.info("Database tables created successfully")
     except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
+        logger.warning(f"Database initialization failed: {e}")
+        logger.info("Application will continue without database features")
+
+# Initialize database tables on startup (only if not in import context)
+if __name__ == '__main__':
+    create_tables()
 
 if __name__ == '__main__':
     # Get port from environment variable for Render deployment
@@ -853,13 +863,7 @@ if __name__ == '__main__':
     logger.info(f"Redis enabled: {job_storage.enable_redis}")
     logger.info(f"Celery enabled: {os.environ.get('USE_CELERY', 'true')}")
 
-    # Create database tables
-    with app.app_context():
-        try:
-            db.create_all()
-            logger.info("Database tables created successfully")
-        except Exception as e:
-            logger.error(f"Error creating database tables: {e}")
+    # Database tables are already created by create_tables() function above
 
     if environment == 'production':
         # Production mode - use gunicorn in production

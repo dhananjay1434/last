@@ -249,7 +249,8 @@ def health_check_task():
     """Periodic health check task."""
     try:
         # Check database connection
-        db.session.execute('SELECT 1')
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
         
         # Check Redis connection
         if job_storage.redis_client:
