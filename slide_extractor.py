@@ -379,6 +379,24 @@ class SlideExtractor:
 
         return mask
 
+    def _create_temp_cookies(self):
+        """Create a temporary cookies file to simulate browser session"""
+        try:
+            import tempfile
+            cookies_content = """# Netscape HTTP Cookie File
+# This is a generated file! Do not edit.
+
+.youtube.com	TRUE	/	FALSE	1735689600	CONSENT	PENDING+987
+.youtube.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	abcdefghijk
+.youtube.com	TRUE	/	FALSE	1735689600	YSC	random123456
+"""
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            temp_file.write(cookies_content)
+            temp_file.close()
+            return temp_file.name
+        except Exception:
+            return None
+
     def download_video(self):
         """Download the YouTube video using yt-dlp with multiple fallback strategies"""
         try:
@@ -389,45 +407,67 @@ class SlideExtractor:
             import random
             import time
 
-            # Rotate user agents to avoid detection
+            # Create temporary cookies file
+            cookies_file = self._create_temp_cookies()
+
+            # Latest 2024 user agents to avoid detection
             user_agents = [
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
             ]
 
-            strategies = [
-                # Strategy 1: Enhanced with random user agent and delays
+            # Build strategies with optional cookies
+            base_strategies = []
+
+            # Strategy 1: 2024 Enhanced with latest anti-bot measures + cookies
+            strategy1 = [
+                "yt-dlp",
+                "-f", "best[height<=720][ext=mp4]/best[height<=720]/best",
+                "-o", self.video_path,
+                "--user-agent", random.choice(user_agents),
+                "--add-header", "Accept-Language:en-US,en;q=0.9,*;q=0.8",
+                "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "--add-header", "Accept-Encoding:gzip, deflate, br, zstd",
+                "--add-header", "Connection:keep-alive",
+                "--add-header", "Upgrade-Insecure-Requests:1",
+                "--add-header", "Sec-Fetch-Dest:document",
+                "--add-header", "Sec-Fetch-Mode:navigate",
+                "--add-header", "Sec-Fetch-Site:none",
+                "--add-header", "Sec-Fetch-User:?1",
+                "--add-header", "Cache-Control:max-age=0",
+                "--extractor-args", "youtube:skip=dash,hls;player_skip=configs;player_client=web",
+                "--sleep-interval", "3",
+                "--max-sleep-interval", "8",
+                "--no-check-certificates",
+                "--ignore-errors",
+                "--no-warnings"
+            ]
+            if cookies_file:
+                strategy1.extend(["--cookies", cookies_file])
+            strategy1.append(self.video_url)
+            base_strategies.append(strategy1)
+
+            strategies = base_strategies + [
+                # Strategy 2: 2024 Browser simulation with cookies approach
                 [
                     "yt-dlp",
-                    "-f", "best[height<=720][ext=mp4]/best[height<=720]/best",
+                    "-f", "best[height<=720][ext=mp4]/best[height<=480]/worst",
                     "-o", self.video_path,
-                    "--user-agent", random.choice(user_agents),
+                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                     "--add-header", "Accept-Language:en-US,en;q=0.9",
-                    "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "--add-header", "Accept-Encoding:gzip, deflate, br",
-                    "--add-header", "Connection:keep-alive",
-                    "--add-header", "Upgrade-Insecure-Requests:1",
-                    "--extractor-args", "youtube:skip=dash,hls;player_skip=configs",
-                    "--sleep-interval", "2",
-                    "--max-sleep-interval", "5",
+                    "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "--add-header", "Sec-Ch-Ua:\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+                    "--add-header", "Sec-Ch-Ua-Mobile:?0",
+                    "--add-header", "Sec-Ch-Ua-Platform:\"Windows\"",
+                    "--extractor-args", "youtube:player_client=web,mweb;skip=dash,hls",
+                    "--sleep-interval", "4",
+                    "--max-sleep-interval", "9",
                     "--no-check-certificates",
                     "--ignore-errors",
-                    self.video_url
-                ],
-                # Strategy 2: Mobile user agent with lower quality
-                [
-                    "yt-dlp",
-                    "-f", "best[height<=480][ext=mp4]/worst[height>=240]",
-                    "-o", self.video_path,
-                    "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                    "--add-header", "Accept-Language:en-US,en;q=0.9",
-                    "--extractor-args", "youtube:skip=dash,hls",
-                    "--sleep-interval", "3",
-                    "--max-sleep-interval", "7",
-                    "--no-check-certificates",
                     self.video_url
                 ],
                 # Strategy 3: Very conservative approach
@@ -457,15 +497,34 @@ class SlideExtractor:
                     "--ignore-errors",
                     self.video_url
                 ],
-                # Strategy 5: Minimal approach with basic format
+                # Strategy 5: 2024 Android client method (most effective)
                 [
                     "yt-dlp",
-                    "-f", "worst",
+                    "-f", "best[height<=720][ext=mp4]/best[height<=480]/worst",
                     "-o", self.video_path,
-                    "--user-agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                    "--user-agent", "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+                    "--extractor-args", "youtube:player_client=android",
+                    "--add-header", "X-YouTube-Client-Name:3",
+                    "--add-header", "X-YouTube-Client-Version:19.09.37",
+                    "--sleep-interval", "2",
+                    "--max-sleep-interval", "6",
                     "--no-check-certificates",
                     "--ignore-errors",
                     "--no-warnings",
+                    self.video_url
+                ],
+                # Strategy 6: iOS client fallback
+                [
+                    "yt-dlp",
+                    "-f", "best[height<=480][ext=mp4]/worst",
+                    "-o", self.video_path,
+                    "--user-agent", "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 16_1_2 like Mac OS X)",
+                    "--extractor-args", "youtube:player_client=ios",
+                    "--add-header", "X-YouTube-Client-Name:5",
+                    "--add-header", "X-YouTube-Client-Version:19.09.3",
+                    "--sleep-interval", "3",
+                    "--no-check-certificates",
+                    "--ignore-errors",
                     self.video_url
                 ]
             ]
@@ -477,9 +536,9 @@ class SlideExtractor:
 
                     print(f"Attempting download with strategy {i}")
 
-                    # Add random delay between attempts to avoid rate limiting
+                    # Add progressive delay between attempts to avoid rate limiting
                     if i > 1:
-                        delay = random.uniform(2, 5)
+                        delay = random.uniform(2 + i, 5 + i)  # Increase delay with each attempt
                         time.sleep(delay)
 
                     result = subprocess.run(command, capture_output=True, text=True, timeout=240)
@@ -525,6 +584,14 @@ class SlideExtractor:
             if self.callback:
                 self.callback(f"Error: {error_msg}")
             return False
+
+        finally:
+            # Clean up temporary cookies file
+            if cookies_file and os.path.exists(cookies_file):
+                try:
+                    os.unlink(cookies_file)
+                except Exception:
+                    pass
 
     def detect_scenes(self, cap, fps, total_frames):
         """
