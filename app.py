@@ -828,25 +828,81 @@ def debug_jobs():
         logger.error(f"Debug endpoint error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug/init-db', methods=['POST'])
+def init_database():
+    """Manual database initialization endpoint"""
+    try:
+        create_tables()
+        return jsonify({
+            'status': 'success',
+            'message': 'Database initialization attempted',
+            'database_url': app.config['SQLALCHEMY_DATABASE_URI']
+        })
+    except Exception as e:
+        logger.error(f"Manual database initialization error: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
 # Database initialization
 def create_tables():
     """Create database tables"""
     try:
         with app.app_context():
-            # Check if we can connect to the database
-            with db.engine.connect() as conn:
-                conn.execute(db.text('SELECT 1'))
-
             # Create tables if they don't exist
             db.create_all()
             logger.info("Database tables created successfully")
+
+            # Test database connection
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(db.text('SELECT 1'))
+                logger.info("Database connection test successful")
+            except Exception as conn_error:
+                logger.warning(f"Database connection test failed: {conn_error}")
+
     except Exception as e:
         logger.warning(f"Database initialization failed: {e}")
         logger.info("Application will continue without database features")
 
-# Initialize database tables on startup (only if not in import context)
-if __name__ == '__main__':
-    create_tables()
+        # Try to create a simple SQLite database as fallback
+        try:
+            import sqlite3
+            import os
+
+            # Create a simple SQLite database in the current directory
+            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slide_extractor.db')
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            # Create basic jobs table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT UNIQUE NOT NULL,
+                    video_url TEXT NOT NULL,
+                    output_dir TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending',
+                    progress REAL DEFAULT 0.0,
+                    message TEXT,
+                    error TEXT,
+                    created_at TEXT,
+                    slides_count INTEGER DEFAULT 0,
+                    pdf_path TEXT,
+                    study_guide_path TEXT
+                )
+            ''')
+
+            conn.commit()
+            conn.close()
+            logger.info("Created fallback SQLite database")
+
+        except Exception as sqlite_error:
+            logger.error(f"Failed to create fallback database: {sqlite_error}")
+
+# Initialize database tables on startup
+create_tables()
 
 if __name__ == '__main__':
     # Get port from environment variable for Render deployment

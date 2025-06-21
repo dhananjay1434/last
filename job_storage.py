@@ -55,50 +55,60 @@ class JobStorageService:
     def create_job(self, job_data: Dict[str, Any]) -> str:
         """
         Create a new job in both Redis and database.
-        
+
         Args:
             job_data: Job configuration and metadata
-            
+
         Returns:
             job_id: Unique job identifier
         """
         try:
-            # Create job in database
-            job = Job(
-                job_id=job_data['job_id'],
-                video_url=job_data['video_url'],
-                output_dir=job_data['output_dir'],
-                adaptive_sampling=job_data.get('adaptive_sampling', True),
-                extract_content=job_data.get('extract_content', True),
-                organize_slides=job_data.get('organize_slides', True),
-                generate_pdf=job_data.get('generate_pdf', True),
-                enable_transcription=job_data.get('enable_transcription', False),
-                enable_ocr_enhancement=job_data.get('enable_ocr_enhancement', False),
-                enable_concept_extraction=job_data.get('enable_concept_extraction', False),
-                enable_slide_descriptions=job_data.get('enable_slide_descriptions', False),
-                status='pending',
-                job_metadata=job_data.get('metadata', {})
-            )
-            
-            db.session.add(job)
-            db.session.commit()
-            
+            # Try to create job in database
+            try:
+                job = Job(
+                    job_id=job_data['job_id'],
+                    video_url=job_data['video_url'],
+                    output_dir=job_data['output_dir'],
+                    adaptive_sampling=job_data.get('adaptive_sampling', True),
+                    extract_content=job_data.get('extract_content', True),
+                    organize_slides=job_data.get('organize_slides', True),
+                    generate_pdf=job_data.get('generate_pdf', True),
+                    enable_transcription=job_data.get('enable_transcription', False),
+                    enable_ocr_enhancement=job_data.get('enable_ocr_enhancement', False),
+                    enable_concept_extraction=job_data.get('enable_concept_extraction', False),
+                    enable_slide_descriptions=job_data.get('enable_slide_descriptions', False),
+                    status='pending',
+                    job_metadata=job_data.get('metadata', {})
+                )
+
+                db.session.add(job)
+                db.session.commit()
+                logger.info(f"Created job {job_data['job_id']} in database")
+
+            except Exception as db_error:
+                logger.warning(f"Failed to create job in database: {db_error}")
+                db.session.rollback()
+                logger.info("Continuing with Redis/memory storage only")
+
             # Cache in Redis if available
             if self.redis_client:
-                job_key = f"{self.JOB_PREFIX}{job_data['job_id']}"
-                self.redis_client.hset(job_key, mapping=job_data)
-                self.redis_client.expire(job_key, self.CACHE_TTL)
-                
-                # Add to active jobs list
-                self.redis_client.sadd(self.JOB_LIST_KEY, job_data['job_id'])
-                self.redis_client.expire(self.JOB_LIST_KEY, self.ACTIVE_JOB_TTL)
-            
+                try:
+                    job_key = f"{self.JOB_PREFIX}{job_data['job_id']}"
+                    self.redis_client.hset(job_key, mapping=job_data)
+                    self.redis_client.expire(job_key, self.CACHE_TTL)
+
+                    # Add to active jobs list
+                    self.redis_client.sadd(self.JOB_LIST_KEY, job_data['job_id'])
+                    self.redis_client.expire(self.JOB_LIST_KEY, self.ACTIVE_JOB_TTL)
+                    logger.info(f"Cached job {job_data['job_id']} in Redis")
+                except Exception as redis_error:
+                    logger.warning(f"Failed to cache job in Redis: {redis_error}")
+
             logger.info(f"Created job {job_data['job_id']}")
             return job_data['job_id']
-            
+
         except Exception as e:
             logger.error(f"Error creating job: {e}")
-            db.session.rollback()
             raise
     
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
