@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Download, FileText, Settings, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { Play, Download, FileText, Settings, CheckCircle, Loader } from 'lucide-react';
 import axios from 'axios';
 
 // Configuration
