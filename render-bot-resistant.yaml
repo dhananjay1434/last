@@ -1,0 +1,41 @@
+services:
+  # Main API Service (Bot Detection Resistant)
+  - type: web
+    name: slide-extractor-api
+    env: python
+    buildCommand: |
+      pip install --upgrade pip &&
+      pip install --upgrade yt-dlp &&
+      pip install -r requirements.txt &&
+      python deployment_bot_detection_fix.py
+    startCommand: python start_app.py
+    plan: standard
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: production
+      - key: USE_CELERY
+        value: "false"  # Simplified for reliability
+      - key: USE_REDIS
+        value: "false"  # Simplified for reliability
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://latenighter.netlify.app"
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in dashboard
+      - key: MAX_CONTENT_LENGTH
+        value: "104857600"  # 100MB
+      - key: UPLOAD_TIMEOUT
+        value: "600"  # 10 minutes
+      - key: FLASK_APP
+        value: app.py
+      # YouTube Download Optimization
+      - key: YOUTUBE_DOWNLOAD_TIMEOUT
+        value: "300"
+      - key: YOUTUBE_MAX_RETRIES
+        value: "5"
+      - key: YOUTUBE_ENABLE_COOKIES
+        value: "true"
+    healthCheckPath: /api/status

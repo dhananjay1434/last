@@ -15,7 +15,8 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from robust_youtube_downloader import RobustYouTubeDownloader, DownloadResult
+    from robust_youtube_downloader import RobustYouTubeDownloader
+    from advanced_youtube_downloader import AdvancedYouTubeDownloader, DownloadResult
     ROBUST_DOWNLOADER_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Robust downloader not available: {e}")
@@ -110,7 +111,7 @@ class RobustSlideExtractor:
         try:
             logger.info("Starting robust video download...")
             self.download_result = self.downloader.download(self.video_url)
-            
+
             if self.download_result.success:
                 self.video_path = self.download_result.video_path
                 self.stats['download_method'] = self.download_result.method
@@ -118,7 +119,28 @@ class RobustSlideExtractor:
                 logger.info(f"✅ Video downloaded successfully using: {self.download_result.method}")
                 return True
             else:
-                error_msg = f"Video download failed: {self.download_result.error}"
+                logger.warning(f"Robust downloader failed: {self.download_result.error}")
+
+                # Try advanced downloader as fallback for bot detection issues
+                logger.info("Trying advanced downloader with bot detection bypass...")
+                try:
+                    advanced_downloader = AdvancedYouTubeDownloader(output_dir=self.output_dir)
+                    success, video_path, error = advanced_downloader.download_video(self.video_url)
+
+                    if success and video_path:
+                        self.video_path = video_path
+                        self.stats['download_method'] = "Advanced YouTube Downloader"
+                        self.stats['download_success'] = True
+                        logger.info(f"✅ Advanced downloader succeeded: {video_path}")
+                        advanced_downloader.cleanup()
+                        return True
+                    else:
+                        logger.error(f"Advanced downloader also failed: {error}")
+                        advanced_downloader.cleanup()
+                except Exception as e:
+                    logger.error(f"Advanced downloader exception: {e}")
+
+                error_msg = f"All download methods failed: {self.download_result.error}"
                 self.stats['errors'].append(error_msg)
                 logger.error(error_msg)
                 return False
