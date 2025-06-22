@@ -18,17 +18,21 @@ class JobStorageService:
     Hybrid job storage service using Redis for fast access and PostgreSQL for persistence.
     """
     
-    def __init__(self, redis_url: str = None, enable_redis: bool = True):
+    def __init__(self, redis_url: str = None, enable_redis: bool = None):
         """
         Initialize the job storage service.
-        
+
         Args:
             redis_url: Redis connection URL
             enable_redis: Whether to use Redis for caching
         """
+        # Check environment variable for Redis enablement
+        if enable_redis is None:
+            enable_redis = os.environ.get('USE_REDIS', 'true').lower() == 'true'
+
         self.enable_redis = enable_redis
         self.redis_client = None
-        
+
         # Initialize Redis if enabled
         if self.enable_redis:
             try:
@@ -41,6 +45,8 @@ class JobStorageService:
                 logger.warning(f"Failed to connect to Redis: {e}. Falling back to database only.")
                 self.enable_redis = False
                 self.redis_client = None
+        else:
+            logger.info("Redis disabled by configuration. Using database-only storage.")
         
         # Redis key prefixes
         self.JOB_PREFIX = "job:"
