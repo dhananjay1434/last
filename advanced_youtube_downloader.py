@@ -138,21 +138,22 @@ youtube.com	FALSE	/	FALSE	1735689600	wide	1
         )
     
     def _strategy_cookies_with_visitor_data(self, url: str, attempt: int) -> Tuple[bool, Optional[str], Optional[str]]:
-        """Strategy 1: Use cookies with visitor data"""
+        """Strategy 1: Use mweb client with enhanced 2025 settings"""
         output_template = os.path.join(self.output_dir, "video_%(id)s.%(ext)s")
-        visitor_data = self._get_visitor_data()
-        
+
         cmd = [
             "yt-dlp",
             "--format", "best[height<=720]/best",
             "--output", output_template,
+            "--extractor-args", "youtube:player_client=mweb",
+            "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
             "--no-check-certificates",
             "--ignore-errors",
             "--no-warnings",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "--extractor-args", f"youtube:visitor_data={visitor_data}",
-            "--sleep-interval", "2",
-            "--max-sleep-interval", "5"
+            "--sleep-interval", "5",
+            "--max-sleep-interval", "10",
+            "--retries", "3",
+            "--fragment-retries", "3"
         ]
         
         if self.cookies_file and os.path.exists(self.cookies_file):
