@@ -3,11 +3,14 @@ import requests
 import json
 import time
 import os
-from typing import Optional, Tuple, Dict, Any
+import threading
+from typing import Optional, Tuple, Dict, Any, List
+from datetime import datetime
 
 # Configuration
-API_BASE_URL = "http://127.0.0.1:5000"
+API_BASE_URL = os.environ.get('API_BASE_URL', "http://127.0.0.1:5000")
 POLL_INTERVAL = 2  # seconds
+MAX_POLL_ATTEMPTS = 300  # 10 minutes max polling
 
 def check_api_status() -> Tuple[bool, str]:
     """Check if the API server is running and get feature status."""

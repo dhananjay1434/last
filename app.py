@@ -321,7 +321,8 @@ def extract_slides():
                 'params': params,
                 'output_dir': output_dir,
                 'slides': [],
-                'error': None
+                'error': None,
+                'message': 'Job started with threading'
             }
             extraction_jobs[job_id] = job_data
             try:
@@ -331,8 +332,11 @@ def extract_slides():
             except (ValueError, TypeError):
                 pass
 
+            # Log job creation for debugging
+            logger.info(f"Created job {job_id} in memory storage. Total jobs: {len(extraction_jobs)}")
+
             # Start extraction in a background thread
-            threading.Thread(target=run_extraction, args=(job_id, params)).start()
+            threading.Thread(target=run_extraction, args=(job_id, params), daemon=True).start()
 
             return jsonify({
                 'job_id': job_id,
@@ -548,6 +552,8 @@ def get_job_status(job_id):
                     'has_descriptions': 'descriptions' in job
                 })
 
+        # Log the job lookup failure for debugging
+        logger.warning(f"Job {job_id} not found. Available jobs: {list(extraction_jobs.keys())}")
         return jsonify({'error': 'Job not found'}), 404
 
     except Exception as e:
