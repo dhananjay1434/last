@@ -98,28 +98,41 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 db.init_app(app)
 migrate = Migrate(app, db)
 
-# Initialize Celery (only if enabled)
-use_celery_env = os.environ.get('USE_CELERY', 'true').lower() == 'true'
+# Initialize Celery (only if enabled and Redis available)
+use_celery_env = os.environ.get('USE_CELERY', 'false').lower() == 'true'  # Default to false for simpler deployment
 if use_celery_env:
     try:
+        # Test Redis connection first
+        import redis
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        redis_client = redis.from_url(redis_url)
+        redis_client.ping()  # Test connection
+
         celery = make_celery(app)
-        logger.info("Celery initialized successfully")
+        logger.info("Celery initialized successfully with Redis")
     except Exception as e:
-        logger.warning(f"Failed to initialize Celery: {e}")
+        logger.warning(f"Failed to initialize Celery (Redis unavailable): {e}")
+        logger.info("Falling back to threading mode")
         celery = None
+        use_celery_env = False  # Disable Celery for this session
 else:
-    logger.info("Celery disabled by USE_CELERY environment variable")
+    logger.info("Celery disabled - using threading mode")
     celery = None
 
-# Configure CORS
+# Configure CORS using centralized config
 try:
     from cors_config import configure_cors
     configure_cors(app)
     logger.info("CORS configured from cors_config.py")
 except ImportError:
-    # Default CORS configuration
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
-    logger.info("Using default CORS configuration")
+    # Use centralized CORS configuration
+    cors_origins = config.get_cors_origins()
+    if cors_origins:
+        CORS(app, origins=cors_origins, supports_credentials=True)
+        logger.info(f"CORS configured for origins: {cors_origins}")
+    else:
+        CORS(app, resources={r"/api/*": {"origins": "*"}})
+        logger.info("Using default CORS configuration")
 
 # Define constants
 SLIDES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slides")
@@ -289,8 +302,8 @@ def extract_slides():
         # Create job in storage
         job_storage.create_job(params)
 
-        # Check if Celery is available
-        use_celery = os.environ.get('USE_CELERY', 'true').lower() == 'true'
+        # Check if Celery is available (use same setting as initialization)
+        use_celery = use_celery_env and celery is not None
 
         if use_celery:
             try:
@@ -365,15 +378,33 @@ def run_extraction(job_id, params):
         job['status'] = 'downloading'
         update_job_progress(job_id, 10, 'Downloading video')
 
-        # Create extractor
-        extractor = EnhancedSlideExtractor(
-            video_url=params['video_url'],
-            output_dir=params['output_dir'],
-            adaptive_sampling=params['adaptive_sampling'],
-            extract_content=params['extract_content'],
-            organize_slides=params['organize_slides'],
-            callback=lambda msg: update_job_progress(job_id, None, msg)
-        )
+        # Try to use robust extractor first for better download success
+        try:
+            from robust_slide_extractor import RobustSlideExtractor
+            update_job_progress(job_id, 15, 'Using robust download system...')
+            extractor = RobustSlideExtractor(
+                video_url=params['video_url'],
+                output_dir=params['output_dir'],
+                enable_proxy=False,  # Disable proxy for now
+                use_enhanced=True,
+                adaptive_sampling=params['adaptive_sampling'],
+                extract_content=params['extract_content'],
+                organize_slides=params['organize_slides'],
+                callback=lambda msg: update_job_progress(job_id, None, msg)
+            )
+            logger.info("Using RobustSlideExtractor for better download reliability")
+        except ImportError:
+            # Fallback to enhanced extractor
+            update_job_progress(job_id, 15, 'Using standard download system...')
+            extractor = EnhancedSlideExtractor(
+                video_url=params['video_url'],
+                output_dir=params['output_dir'],
+                adaptive_sampling=params['adaptive_sampling'],
+                extract_content=params['extract_content'],
+                organize_slides=params['organize_slides'],
+                callback=lambda msg: update_job_progress(job_id, None, msg)
+            )
+            logger.info("Using EnhancedSlideExtractor (robust downloader not available)")
 
         # Extract slides
         update_job_progress(job_id, 20, 'Extracting slides')

@@ -28,7 +28,7 @@ class JobStorageService:
         """
         # Check environment variable for Redis enablement
         if enable_redis is None:
-            enable_redis = os.environ.get('USE_REDIS', 'true').lower() == 'true'
+            enable_redis = os.environ.get('USE_REDIS', 'false').lower() == 'true'  # Default to false
 
         self.enable_redis = enable_redis
         self.redis_client = None
@@ -37,8 +37,8 @@ class JobStorageService:
         if self.enable_redis:
             try:
                 redis_url = redis_url or os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-                self.redis_client = redis.from_url(redis_url, decode_responses=True)
-                # Test connection
+                self.redis_client = redis.from_url(redis_url, decode_responses=True, socket_timeout=5)
+                # Test connection with timeout
                 self.redis_client.ping()
                 logger.info(f"Connected to Redis at {redis_url}")
             except Exception as e:
@@ -109,6 +109,11 @@ class JobStorageService:
                     logger.info(f"Cached job {job_data['job_id']} in Redis")
                 except Exception as redis_error:
                     logger.warning(f"Failed to cache job in Redis: {redis_error}")
+                    # Disable Redis for this session if connection fails
+                    if "Connection refused" in str(redis_error) or "timeout" in str(redis_error).lower():
+                        logger.warning("Disabling Redis for this session due to connection issues")
+                        self.enable_redis = False
+                        self.redis_client = None
 
             logger.info(f"Created job {job_data['job_id']}")
             return job_data['job_id']
