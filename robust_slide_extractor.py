@@ -16,11 +16,25 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from robust_youtube_downloader import RobustYouTubeDownloader
-    from advanced_youtube_downloader import AdvancedYouTubeDownloader, DownloadResult
     ROBUST_DOWNLOADER_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Robust downloader not available: {e}")
     ROBUST_DOWNLOADER_AVAILABLE = False
+
+try:
+    from advanced_youtube_downloader import AdvancedYouTubeDownloader, DownloadResult
+    ADVANCED_DOWNLOADER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Advanced downloader not available: {e}")
+    ADVANCED_DOWNLOADER_AVAILABLE = False
+
+    # Create a simple DownloadResult class if not available
+    class DownloadResult:
+        def __init__(self, success: bool, video_path: str = None, error: str = None, method: str = None):
+            self.success = success
+            self.video_path = video_path
+            self.error = error
+            self.method = method
 
 try:
     from slide_extractor import SlideExtractor
@@ -68,6 +82,7 @@ class RobustSlideExtractor:
         
         # Initialize components
         self.downloader = None
+        self.downloader_type = None
         self.extractor = None
         self.download_result = None
         self.video_path = None
@@ -85,66 +100,85 @@ class RobustSlideExtractor:
     
     def _setup_downloader(self) -> bool:
         """Setup the robust YouTube downloader"""
-        if not ROBUST_DOWNLOADER_AVAILABLE:
-            self.stats['errors'].append("Robust downloader not available")
-            return False
-        
-        try:
-            # Create temporary directory for video download
-            self.temp_dir = tempfile.mkdtemp(prefix="robust_video_")
-            self.downloader = RobustYouTubeDownloader(
-                output_dir=self.temp_dir,
-                enable_proxy=self.enable_proxy
-            )
-            return True
-        except Exception as e:
-            error_msg = f"Failed to setup downloader: {e}"
-            self.stats['errors'].append(error_msg)
-            logger.error(error_msg)
-            return False
+        # Create temporary directory for video download
+        self.temp_dir = tempfile.mkdtemp(prefix="robust_video_")
+
+        # Try robust downloader first
+        if ROBUST_DOWNLOADER_AVAILABLE:
+            try:
+                self.downloader = RobustYouTubeDownloader(
+                    output_dir=self.temp_dir,
+                    enable_proxy=self.enable_proxy
+                )
+                self.downloader_type = "robust"
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to setup robust downloader: {e}")
+
+        # Fallback to advanced downloader
+        if ADVANCED_DOWNLOADER_AVAILABLE:
+            try:
+                self.downloader = AdvancedYouTubeDownloader(output_dir=self.temp_dir)
+                self.downloader_type = "advanced"
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to setup advanced downloader: {e}")
+
+        error_msg = "No downloader available"
+        self.stats['errors'].append(error_msg)
+        logger.error(error_msg)
+        return False
     
     def _download_video(self) -> bool:
         """Download the video using robust methods"""
         if not self.downloader:
             return False
-        
+
         try:
-            logger.info("Starting robust video download...")
-            self.download_result = self.downloader.download(self.video_url)
+            logger.info(f"Starting video download using {self.downloader_type} downloader...")
 
-            if self.download_result.success:
-                self.video_path = self.download_result.video_path
-                self.stats['download_method'] = self.download_result.method
-                self.stats['download_success'] = True
-                logger.info(f"✅ Video downloaded successfully using: {self.download_result.method}")
-                return True
-            else:
-                logger.warning(f"Robust downloader failed: {self.download_result.error}")
+            if self.downloader_type == "robust":
+                # Use robust downloader
+                self.download_result = self.downloader.download(self.video_url)
 
-                # Try advanced downloader as fallback for bot detection issues
-                logger.info("Trying advanced downloader with bot detection bypass...")
-                try:
-                    advanced_downloader = AdvancedYouTubeDownloader(output_dir=self.output_dir)
-                    success, video_path, error = advanced_downloader.download_video(self.video_url)
+                if self.download_result.success:
+                    self.video_path = self.download_result.video_path
+                    self.stats['download_method'] = self.download_result.method
+                    self.stats['download_success'] = True
+                    logger.info(f"✅ Video downloaded successfully using: {self.download_result.method}")
+                    return True
+                else:
+                    logger.warning(f"Robust downloader failed: {self.download_result.error}")
 
-                    if success and video_path:
-                        self.video_path = video_path
-                        self.stats['download_method'] = "Advanced YouTube Downloader"
-                        self.stats['download_success'] = True
-                        logger.info(f"✅ Advanced downloader succeeded: {video_path}")
-                        advanced_downloader.cleanup()
-                        return True
-                    else:
-                        logger.error(f"Advanced downloader also failed: {error}")
-                        advanced_downloader.cleanup()
-                except Exception as e:
-                    logger.error(f"Advanced downloader exception: {e}")
+            elif self.downloader_type == "advanced":
+                # Use advanced downloader with DownloadResult
+                if hasattr(self.downloader, 'download_video_with_result'):
+                    self.download_result = self.downloader.download_video_with_result(self.video_url)
+                else:
+                    # Fallback to old method
+                    success, video_path, error = self.downloader.download_video(self.video_url)
+                    self.download_result = DownloadResult(
+                        success=success,
+                        video_path=video_path,
+                        error=error,
+                        method="Advanced YouTube Downloader"
+                    )
 
-                error_msg = f"All download methods failed: {self.download_result.error}"
-                self.stats['errors'].append(error_msg)
-                logger.error(error_msg)
-                return False
-                
+                if self.download_result.success:
+                    self.video_path = self.download_result.video_path
+                    self.stats['download_method'] = self.download_result.method
+                    self.stats['download_success'] = True
+                    logger.info(f"✅ Video downloaded successfully using: {self.download_result.method}")
+                    return True
+                else:
+                    logger.warning(f"Advanced downloader failed: {self.download_result.error}")
+
+            # If we get here, the primary method failed
+            error_msg = f"Download failed: {self.download_result.error if self.download_result else 'Unknown error'}"
+            self.stats['errors'].append(error_msg)
+            logger.error(error_msg)
+            return False
+
         except Exception as e:
             error_msg = f"Exception during video download: {e}"
             self.stats['errors'].append(error_msg)

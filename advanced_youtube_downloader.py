@@ -12,8 +12,18 @@ import time
 import random
 import json
 from typing import Optional, Tuple, Dict, Any
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class DownloadResult:
+    """Result of a video download operation"""
+    success: bool
+    video_path: Optional[str] = None
+    error: Optional[str] = None
+    method: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class AdvancedYouTubeDownloader:
     """Advanced YouTube downloader with cookie support and bot detection bypass"""
@@ -60,11 +70,11 @@ youtube.com	FALSE	/	FALSE	1735689600	wide	1
     def download_video(self, url: str, max_retries: int = 3) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Download YouTube video with advanced bot detection bypass
-        
+
         Args:
             url: YouTube video URL
             max_retries: Maximum number of retry attempts
-            
+
         Returns:
             Tuple of (success, video_path, error_message)
         """
@@ -100,6 +110,32 @@ youtube.com	FALSE	/	FALSE	1735689600	wide	1
                     logger.error(f"Strategy {strategy_idx} attempt {attempt + 1} exception: {e}")
         
         return False, None, "All download strategies failed"
+
+    def download_video_with_result(self, url: str, max_retries: int = 3) -> DownloadResult:
+        """
+        Download YouTube video and return DownloadResult object
+
+        Args:
+            url: YouTube video URL
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            DownloadResult object with success status, video path, and metadata
+        """
+        success, video_path, error = self.download_video(url, max_retries)
+
+        # Determine which method was used (simplified)
+        method = "Advanced YouTube Downloader"
+        if success:
+            method += " (Bot Detection Bypass)"
+
+        return DownloadResult(
+            success=success,
+            video_path=video_path,
+            error=error,
+            method=method,
+            metadata={'url': url, 'max_retries': max_retries}
+        )
     
     def _strategy_cookies_with_visitor_data(self, url: str, attempt: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """Strategy 1: Use cookies with visitor data"""

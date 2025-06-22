@@ -1,0 +1,25 @@
+# Docker Compose Override for Different Environments
+# Use: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+version: '3.8'
+
+services:
+  # Development environment with full dependencies
+  app-dev:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    environment:
+      - FLASK_ENV=development
+      - DEBUG=true
+
+  # Production environment with minimal dependencies
+  app-prod:
+    build:
+      context: .
+      target: production
+    environment:
+      - FLASK_ENV=production
+      - DEBUG=false

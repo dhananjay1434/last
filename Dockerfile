@@ -40,6 +40,7 @@ RUN useradd --create-home --shell /bin/bash app
 WORKDIR /app
 
 # Copy requirements first for better caching
+# Copy requirements (use requirements_production.txt for production)
 COPY requirements.txt .
 
 # Install Python dependencies

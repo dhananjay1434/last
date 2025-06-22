@@ -1,0 +1,25 @@
+# Minimal Requirements for Basic Slide Extraction
+# Core functionality only - fastest installation and smallest footprint
+
+# Web Interface
+gradio>=4.0.0
+
+# Computer Vision and Image Processing
+opencv-python>=4.5.0
+numpy>=1.19.0
+Pillow>=8.0.0
+
+# OCR and Text Processing
+pytesseract>=0.3.8
+
+# Video Processing
+yt-dlp>=2023.1.6
+
+# HTTP Requests
+requests>=2.31.0
+
+# System Utilities
+psutil>=5.9.0
+
+# Note: This minimal set provides basic slide extraction functionality
+# For enhanced features, use requirements_gradio.txt or requirements.txt

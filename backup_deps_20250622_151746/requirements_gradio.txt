@@ -15,7 +15,7 @@ pytesseract>=0.3.8
 nltk>=3.6.0
 
 # Video Processing
-yt-dlp>=2023.1.6
+yt-dlp>=2022.1.21
 moviepy>=1.0.0
 
 # PDF Generation
