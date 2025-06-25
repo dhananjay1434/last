@@ -18,8 +18,9 @@ sys.path.append(cracker_master_dir)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import slide extractor components
-from slide_extractor import SlideExtractor
+from slide_extractor import SlideExtractor # Keep for now, might be used by EnhancedSlideExtractor
 from enhanced_slide_extractor import EnhancedSlideExtractor
+from unified_youtube_downloader import UnifiedYouTubeDownloader, DownloadResult # Import the new downloader
 
 # Import scalability components
 from models import db, Job, Slide, JobMetrics
@@ -376,43 +377,63 @@ def run_extraction(job_id, params):
 
     try:
         job['status'] = 'downloading'
-        update_job_progress(job_id, 10, 'Downloading video')
+        update_job_progress(job_id, 10, 'Downloading video with Unified Downloader...')
 
-        # Try to use robust extractor first for better download success
-        try:
-            from robust_slide_extractor import RobustSlideExtractor
-            update_job_progress(job_id, 15, 'Using robust download system...')
-            extractor = RobustSlideExtractor(
-                video_url=params['video_url'],
-                output_dir=params['output_dir'],
-                enable_proxy=False,  # Disable proxy for now
-                use_enhanced=True,
-                adaptive_sampling=params['adaptive_sampling'],
-                extract_content=params['extract_content'],
-                organize_slides=params['organize_slides'],
-                callback=lambda msg: update_job_progress(job_id, None, msg)
-            )
-            logger.info("Using RobustSlideExtractor for better download reliability")
-        except ImportError:
-            # Fallback to enhanced extractor
-            update_job_progress(job_id, 15, 'Using standard download system...')
-            extractor = EnhancedSlideExtractor(
-                video_url=params['video_url'],
-                output_dir=params['output_dir'],
-                adaptive_sampling=params['adaptive_sampling'],
-                extract_content=params['extract_content'],
-                organize_slides=params['organize_slides'],
-                callback=lambda msg: update_job_progress(job_id, None, msg)
-            )
-            logger.info("Using EnhancedSlideExtractor (robust downloader not available)")
+        # Initialize the UnifiedYouTubeDownloader
+        # Output directory for the downloader will be within the job's output_dir
+        video_download_dir = os.path.join(params['output_dir'], "video_content")
+        os.makedirs(video_download_dir, exist_ok=True)
+
+        downloader = UnifiedYouTubeDownloader(output_dir=video_download_dir)
+        download_result: DownloadResult = downloader.download_video(params['video_url'])
+
+        if not download_result.success or not download_result.video_path:
+            job['status'] = 'failed'
+            job['error'] = f"Failed to download video: {download_result.error}"
+            logger.error(f"Job {job_id} failed during download: {download_result.error}")
+            if download_result.rate_limited:
+                logger.warning(f"Job {job_id} download may have been rate limited.")
+            downloader.cleanup()
+            return
+
+        update_job_progress(job_id, 20, f"Video download successful using {download_result.strategy_used}. Path: {download_result.video_path}")
+        logger.info(f"Job {job_id} video downloaded to {download_result.video_path} using strategy {download_result.strategy_used}")
+
+        # Now, initialize the slide extractor with the downloaded video file
+        # We'll use EnhancedSlideExtractor as the primary one for actual slide processing
+        # The `video_url` parameter for EnhancedSlideExtractor will now be the local file path.
+        update_job_progress(job_id, 25, 'Initializing slide extractor...')
+
+        # The EnhancedSlideExtractor expects a URL or a local path.
+        # We pass the local path of the downloaded video.
+        # The output_dir for the extractor should be the job's main output_dir, not the video_download_dir.
+        extractor = EnhancedSlideExtractor(
+            video_url=download_result.video_path,  # Pass the local video path
+            output_dir=params['output_dir'],
+            adaptive_sampling=params['adaptive_sampling'],
+            extract_content=params['extract_content'],
+            organize_slides=params['organize_slides'],
+            callback=lambda msg: update_job_progress(job_id, None, msg),
+            is_local_file=True # Add a flag if EnhancedSlideExtractor needs to know it's a local file
+        )
+        logger.info(f"Job {job_id} using EnhancedSlideExtractor with local video file.")
 
         # Extract slides
-        update_job_progress(job_id, 20, 'Extracting slides')
-        success = extractor.extract_slides()
+        update_job_progress(job_id, 30, 'Extracting slides from downloaded video...')
+        # The extract_slides method in EnhancedSlideExtractor might need adjustment
+        # if it strictly expects a URL and handles downloading itself.
+        # Assuming it can take a local file path.
+        extraction_success = extractor.extract_slides()
         
-        if not success:
+        # Cleanup downloaded video file after extraction if it's no longer needed by extractor
+        # Or let the downloader's cleanup handle it if output_dir was temporary for it.
+        # For now, let's assume EnhancedSlideExtractor processes it and we can clean the video_download_dir
+        downloader.cleanup() # This will clean up video_download_dir if it's temporary for the downloader
+
+        if not extraction_success:
             job['status'] = 'failed'
-            job['error'] = 'Failed to extract slides'
+            job['error'] = extractor.get_error() or 'Failed to extract slides after video download'
+            logger.error(f"Job {job_id} failed during slide extraction: {job['error']}")
             return
 
         # Get slides
