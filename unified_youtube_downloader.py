@@ -419,78 +419,111 @@ class UnifiedYouTubeDownloader:
         }
         return self._execute_yt_dlp_download(url, f"yt_dlp_conservative_{conservative_player_client}", custom_config=config)
 
-    def _strategy_pytube_download(self, url: str) -> DownloadResult:
-        """Strategy 5: Use pytube library as an alternative."""
+    def _strategy_pytube_download(self, url: str, max_pytube_retries: int = 2) -> DownloadResult:
+        """Strategy 5: Use pytube library as an alternative, with retries and custom User-Agent."""
         logger.info(f"Attempting download strategy: pytube for URL: {url}")
+
         try:
-            from pytube import YouTube
-            from pytube.exceptions import PytubeError
+            from pytube import YouTube, request as pytube_request
+            from pytube.exceptions import PytubeError, MaxRetriesExceeded, RegexMatchError, VideoUnavailable, MembersOnly, RecordingUnavailable, LiveStreamError
 
-            self.throttler.wait_if_needed()
+            # Set a custom User-Agent for pytube's requests
+            # Choose a common desktop browser User-Agent
+            desktop_ua = next((ua for ua in BrowserSimulator.USER_AGENTS if "Windows NT" in ua or "Macintosh" in ua and "Mobile" not in ua), BrowserSimulator.USER_AGENTS[0])
+            original_headers = pytube_request.headers.copy()
+            pytube_request.headers['User-Agent'] = desktop_ua
+            logger.debug(f"[pytube] Set User-Agent to: {desktop_ua}")
 
-            # Pytube uses its own request logic, so we can't directly inject all our headers.
-            # However, we can try to set a user agent if the version supports it or by modifying requests session.
-            # For now, we rely on pytube's default mechanisms + our throttling.
+            for attempt in range(max_pytube_retries):
+                logger.info(f"[pytube] Attempt {attempt + 1}/{max_pytube_retries} for {url}")
+                self.throttler.wait_if_needed() # Throttle before each attempt
 
-            yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
-
-            # Select a stream: prefer progressive, mp4, reasonable quality
-            stream = yt.streams.filter(progressive=True, file_extension='mp4')\
-                .order_by('resolution').desc().first()
-            if not stream:
-                stream = yt.streams.filter(file_extension='mp4')\
-                    .order_by('resolution').desc().first() # Adaptive MP4 video
-            if not stream:
-                stream = yt.streams.get_highest_resolution() # Any highest if MP4 not found
-
-            if not stream:
-                return DownloadResult(success=False, error="Pytube: No suitable stream found.", method="pytube", strategy_used="pytube_download")
-
-            logger.info(f"[pytube] Selected stream: {stream.resolution}, {stream.mime_type}, progressive={stream.is_progressive}")
-
-            # Download the video
-            # Sanitize title for filename
-            safe_title = "".join(c for c in yt.title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            filename_prefix = f"video_{yt.video_id}" # Use video_id for consistency
-
-            video_path = stream.download(output_path=self.output_dir, filename_prefix=filename_prefix)
-
-            if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 1024:
-                self.throttler.reset_delay()
-                metadata = {
-                    'title': yt.title,
-                    'author': yt.author,
-                    'length': yt.length,
-                    'publish_date': yt.publish_date.isoformat() if yt.publish_date else None,
-                    'video_id': yt.video_id,
-                    'resolution': stream.resolution,
-                    'filesize': stream.filesize,
-                    'source_library': 'pytube'
-                }
-                # Try to save a .info.json compatible file
-                info_json_path = os.path.splitext(video_path)[0] + ".info.json"
                 try:
-                    with open(info_json_path, 'w', encoding='utf-8') as f_json:
-                        json.dump(metadata, f_json, indent=4)
-                except Exception as e_json_pytube:
-                    logger.warning(f"[pytube] Could not save .info.json: {e_json_pytube}")
+                    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
 
-                return DownloadResult(success=True, video_path=video_path, metadata=metadata, method="pytube", strategy_used="pytube_download")
-            else:
-                return DownloadResult(success=False, error="Pytube: Downloaded file not found or too small.", method="pytube", strategy_used="pytube_download")
+                    # Stream selection logic (prioritize progressive mp4)
+                    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+                    if not stream: # Fallback to any progressive
+                        logger.info("[pytube] No progressive MP4 found, trying any progressive stream.")
+                        stream = yt.streams.filter(progressive=True).order_by('resolution').desc().first()
+                    if not stream: # Fallback to highest resolution non-progressive if really needed (though we prefer single files)
+                        logger.info("[pytube] No progressive stream found, trying highest resolution adaptive (video only).")
+                        stream = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc().first()
+                    # We could also try audio-only if that's ever useful: yt.streams.get_audio_only()
+
+                    if not stream:
+                        return DownloadResult(success=False, error="Pytube: No suitable stream found after fallbacks.", method="pytube", strategy_used="pytube_download")
+
+                    logger.info(f"[pytube] Selected stream: Resolution: {stream.resolution}, MIME: {stream.mime_type}, Progressive: {stream.is_progressive}, Abr: {stream.abr if not stream.is_progressive else 'N/A'}")
+
+                    # Download the video
+                    filename_prefix = f"video_{yt.video_id}"
+                    video_path = stream.download(output_path=self.output_dir, filename_prefix=filename_prefix)
+
+                    if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 1024: # Basic sanity check
+                        self.throttler.reset_delay()
+                        metadata = {
+                            'title': yt.title, 'author': yt.author, 'length': yt.length,
+                            'publish_date': yt.publish_date.isoformat() if yt.publish_date else None,
+                            'video_id': yt.video_id, 'resolution': stream.resolution,
+                            'filesize': stream.filesize, 'source_library': 'pytube',
+                            'stream_itag': stream.itag, 'stream_mime_type': stream.mime_type,
+                            'stream_is_progressive': stream.is_progressive
+                        }
+                        info_json_path = os.path.splitext(video_path)[0] + ".info.json"
+                        try:
+                            with open(info_json_path, 'w', encoding='utf-8') as f_json:
+                                json.dump(metadata, f_json, indent=4)
+                        except Exception as e_json:
+                            logger.warning(f"[pytube] Could not save .info.json: {e_json}")
+
+                        # Restore original headers for pytube.request
+                        pytube_request.headers = original_headers
+                        return DownloadResult(success=True, video_path=video_path, metadata=metadata, method="pytube", strategy_used="pytube_download")
+                    else:
+                        # This attempt failed to produce a valid file
+                        logger.warning(f"[pytube] Downloaded file not found or too small for attempt {attempt + 1}.")
+                        # No immediate return, let the loop retry if attempts remain
+
+                except (MaxRetriesExceeded, ConnectionResetError, TimeoutError) as e_transient: # Common transient network issues
+                    logger.warning(f"[pytube] Transient error on attempt {attempt + 1}/{max_pytube_retries}: {type(e_transient).__name__} - {e_transient}")
+                    if attempt < max_pytube_retries - 1:
+                        time.sleep(random.uniform(3, 7) * (attempt + 1)) # Exponential backoff for retries
+                        continue # Go to next attempt
+                    else: # Max retries for this strategy reached
+                        pytube_request.headers = original_headers # Restore before returning
+                        return DownloadResult(success=False, error=f"Pytube: Max retries exceeded after transient errors. Last error: {e_transient}", method="pytube", strategy_used="pytube_download")
+                except (RegexMatchError, VideoUnavailable, MembersOnly, RecordingUnavailable, LiveStreamError) as e_fatal: # Pytube specific fatal errors
+                    logger.error(f"[pytube] Fatal Pytube error: {type(e_fatal).__name__} - {e_fatal}")
+                    pytube_request.headers = original_headers # Restore before returning
+                    return DownloadResult(success=False, error=f"Pytube: {type(e_fatal).__name__} - {e_fatal}", method="pytube", strategy_used="pytube_download")
+                except PytubeError as e: # Other Pytube errors
+                    error_msg = f"Pytube error: {type(e).__name__} - {str(e)}"
+                    logger.error(f"[pytube] {error_msg}")
+                    rate_limited = "429" in str(e) or "too many requests" in str(e).lower()
+                    if rate_limited: self.throttler.notify_rate_limit_exceeded()
+                    # For most other PytubeErrors, probably not worth retrying within this strategy immediately
+                    pytube_request.headers = original_headers # Restore before returning
+                    return DownloadResult(success=False, error=error_msg, method="pytube", rate_limited=rate_limited, strategy_used="pytube_download")
+                except Exception as e_general: # Catch-all for unexpected issues during an attempt
+                    logger.error(f"[pytube] Unexpected error on attempt {attempt + 1}: {type(e_general).__name__} - {str(e_general)}")
+                    if attempt < max_pytube_retries - 1:
+                        time.sleep(random.uniform(3, 7) * (attempt + 1))
+                        continue
+                    else:
+                        pytube_request.headers = original_headers # Restore before returning
+                        return DownloadResult(success=False, error=f"Pytube: Unexpected error after retries. Last error: {e_general}", method="pytube", strategy_used="pytube_download")
+
+            # If loop finishes, all retries for this strategy failed
+            pytube_request.headers = original_headers # Restore before returning
+            return DownloadResult(success=False, error="Pytube: All download attempts within strategy failed.", method="pytube", strategy_used="pytube_download")
 
         except ImportError:
             logger.error("Pytube module not found. This strategy will be skipped.")
             return DownloadResult(success=False, error="Pytube module not found.", method="pytube", strategy_used="pytube_download")
-        except PytubeError as e:
-            error_msg = f"Pytube error: {str(e)}"
-            logger.error(f"[pytube] {error_msg}")
-            rate_limited = "429" in str(e) or "too many requests" in str(e).lower()
-            if rate_limited: self.throttler.notify_rate_limit_exceeded()
-            return DownloadResult(success=False, error=error_msg, method="pytube", rate_limited=rate_limited, strategy_used="pytube_download")
-        except Exception as e:
-            logger.error(f"[pytube] Unexpected error: {type(e).__name__} - {str(e)}")
-            return DownloadResult(success=False, error=f"Pytube unexpected error: {str(e)}", method="pytube", strategy_used="pytube_download")
+        except Exception as e_setup: # Error in setting up pytube (e.g. header modification)
+             logger.error(f"[pytube] Setup error: {type(e_setup).__name__} - {str(e_setup)}")
+             return DownloadResult(success=False, error=f"Pytube setup error: {str(e_setup)}", method="pytube", strategy_used="pytube_download")
 
 
     def download_video(self, url: str, max_total_retries: int = 3) -> DownloadResult:
