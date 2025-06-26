@@ -147,13 +147,13 @@ class BrowserSimulator:
         headers = BrowserSimulator.get_realistic_headers()
         return {
             'outtmpl': os.path.join(output_dir, 'video_%(id)s.%(ext)s'),
-            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]',
+            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best', # Added /best as final fallback
             'user_agent': headers['User-Agent'],
             'referer': 'https://www.youtube.com/',
             'http_headers': headers, # Pass all generated headers
-            'sleep_interval_requests': random.uniform(1, 3), # yt-dlp internal per-request sleep
-            'sleep_interval': random.uniform(2, 5), # Sleep before each download
-            'max_sleep_interval': 10,
+            'sleep_interval_requests': random.uniform(1.5, 3.5), # Increased
+            'sleep_interval': random.uniform(2.5, 5.5), # Increased
+            'max_sleep_interval': 12, # Slightly increased
             'retries': 5, # Number of retries for errors
             'fragment_retries': 5, # Retries for fragments
             'file_access_retries': 3,
@@ -168,8 +168,8 @@ class BrowserSimulator:
             'no_check_certificate': True, # Sometimes helps in restricted environments
             'extractor_args': {
                 'youtube': {
-                    'player_client': random.choice(['web', 'mweb', 'android']), # Randomize player client
-                    'skip': ['hls', 'dash'], # Prefer direct downloads if available
+                    # 'player_client': random.choice(['web', 'mweb', 'android']), # Will be set by specific strategies
+                    # 'skip': ['hls', 'dash'], # Removed to allow HLS/DASH attempts
                     'player_skip': ['configs', 'translations'], # Reduce unnecessary requests
                 }
             },
@@ -367,39 +367,57 @@ class UnifiedYouTubeDownloader:
 
     # --- Download Strategies ---
     def _strategy_yt_dlp_mweb(self, url: str) -> DownloadResult:
-        """Strategy 1: yt-dlp with 'mweb' (mobile web) player client."""
+        """Strategy 1: yt-dlp with 'mweb' (mobile web) player client and specific mobile UA."""
+        # Find an iPhone or generic mobile User-Agent
+        mobile_ua = next((ua for ua in BrowserSimulator.USER_AGENTS if "iPhone" in ua), BrowserSimulator.USER_AGENTS[-2]) # Fallback to a known mobile UA
         config = {
-            'extractor_args': {'youtube': {'player_client': ['mweb']}},
-            'user_agent': random.choice([ua for ua in BrowserSimulator.USER_AGENTS if "iPhone" in ua or "Android" in ua]) or BrowserSimulator.USER_AGENTS[0]
+            'extractor_args': {'youtube': {'player_client': 'mweb'}}, # Ensure player_client is a string
+            'user_agent': mobile_ua,
+            'http_headers': {'User-Agent': mobile_ua} # Also explicitly set in headers for yt-dlp
         }
         return self._execute_yt_dlp_download(url, "yt_dlp_mweb", custom_config=config)
 
     def _strategy_yt_dlp_web_simulated_browser(self, url: str) -> DownloadResult:
-        """Strategy 2: yt-dlp with 'web' client and strong browser simulation."""
-        # Headers are already handled by get_yt_dlp_config, this strategy ensures 'web' client
+        """Strategy 2: yt-dlp with 'web' client and specific desktop browser UA."""
+        # Find a Desktop User-Agent
+        desktop_ua = next((ua for ua in BrowserSimulator.USER_AGENTS if "Windows NT" in ua or "Macintosh" in ua and "Mobile" not in ua), BrowserSimulator.USER_AGENTS[0])
         config = {
-            'extractor_args': {'youtube': {'player_client': ['web']}}
+            'extractor_args': {'youtube': {'player_client': 'web'}}, # Ensure player_client is a string
+            'user_agent': desktop_ua,
+            'http_headers': {'User-Agent': desktop_ua}
         }
         return self._execute_yt_dlp_download(url, "yt_dlp_web_simulated_browser", custom_config=config)
 
     def _strategy_yt_dlp_android_client(self, url: str) -> DownloadResult:
-        """Strategy 3: yt-dlp with 'android' player client."""
+        """Strategy 3: yt-dlp with 'android' player client and specific Android UA."""
+        android_ua = next((ua for ua in BrowserSimulator.USER_AGENTS if "Android" in ua and "com.google.android.youtube" in ua), BrowserSimulator.USER_AGENTS[-1]) # Fallback to a known Android UA
         config = {
-            'extractor_args': {'youtube': {'player_client': ['android']}},
-             'user_agent': "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+            'extractor_args': {'youtube': {'player_client': 'android'}}, # Ensure player_client is a string
+            'user_agent': android_ua,
+            'http_headers': {'User-Agent': android_ua}
         }
         return self._execute_yt_dlp_download(url, "yt_dlp_android_client", custom_config=config)
 
     def _strategy_yt_dlp_conservative(self, url: str) -> DownloadResult:
-        """Strategy 4: yt-dlp with very conservative settings (lower quality, more tolerant)."""
+        """Strategy 4: yt-dlp with very conservative settings (lower quality, more tolerant), cycles player_client."""
+        # This strategy can still cycle player_client as a last resort if others fail.
+        conservative_player_client = random.choice(['web', 'mweb'])
+        ua_for_conservative = ""
+        if conservative_player_client == 'web':
+            ua_for_conservative = next((ua for ua in BrowserSimulator.USER_AGENTS if "Windows NT" in ua or "Macintosh" in ua and "Mobile" not in ua), BrowserSimulator.USER_AGENTS[0])
+        else: # mweb
+            ua_for_conservative = next((ua for ua in BrowserSimulator.USER_AGENTS if "iPhone" in ua), BrowserSimulator.USER_AGENTS[-2])
+
         config = {
             'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst', # Lower quality
             'retries': 8, # More retries
             'fragment_retries': 8,
             'socket_timeout': 120, # Longer timeout
-            'extractor_args': {'youtube': {'player_client': random.choice(['web', 'mweb'])}}
+            'extractor_args': {'youtube': {'player_client': conservative_player_client}},
+            'user_agent': ua_for_conservative,
+            'http_headers': {'User-Agent': ua_for_conservative}
         }
-        return self._execute_yt_dlp_download(url, "yt_dlp_conservative", custom_config=config)
+        return self._execute_yt_dlp_download(url, f"yt_dlp_conservative_{conservative_player_client}", custom_config=config)
 
     def _strategy_pytube_download(self, url: str) -> DownloadResult:
         """Strategy 5: Use pytube library as an alternative."""
